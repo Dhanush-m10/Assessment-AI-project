@@ -70,6 +70,59 @@ will be proposed when their phase arrives: Activity Log tab, Settings tab,
 admin "General Assessments" tab, notification bell, top-bar global search
 (text-only requirement exists in "Tab 14" notes).
 
+## Assessment modelling decisions (A1–A4, approved 2026-09-22, Phase 1)
+
+| # | Topic | Decision |
+|---|---|---|
+| A1 | Assessment vs Attempt | `Assessment` IS the user's concrete instance: userId, status lifecycle, configuration, timestamps. `AssessmentQuestion` and `UserAnswer` hang directly off it. No `AssessmentAttempt` table. A retake = a new Assessment row. Matches §28's field list and §30's "otherwise make ownership/lifecycle explicit". |
+| A2 | Identity in tables | Bare `String @db.Uuid` columns (Assessment.userId, UserAnswer.userId, UserQuestionHistory.userId, AdminProfile.userId). No local User table, no cross-schema FK into auth.users. Identity always derived from the Supabase session (Phase 2). |
+| A3 | 30-day history | Explicit `UserQuestionHistory { userId, questionId?, codingQuestionId?, lastAnsweredAt, lastCorrectAt? }`, unique per (user, question) pair, updated inside the submit transaction. The 30-day scan is one indexed range query. |
+| A4 | Skill scoring attribution | One primary skill per `AssessmentQuestion.skillId` — the skill whose round-robin quota the question filled. §38 percentages never double-count. A question's other library skill tags remain search metadata. Null for GENERAL assessments (D-GENSKILL). |
+
+## Phase 1 derived schema decisions (traced to spec; applied 2026-09-22)
+
+1. `AssessmentQuestion.questionSnapshot Json` NOT NULL for library AND AI
+   questions (§48: later edits/deletes of library content must not mutate past
+   assessments; one serve-and-strip code path). Server-side only.
+2. `Assessment.jdId?` + `jdSource?` + `jdContentSnapshot?` (null for GENERAL) — C6 + §48.
+3. `Assessment.clientRequestId String? @unique` — §43 double-click idempotency.
+4. `AssessmentSkill.sources AssessmentSkillSource[]` (Postgres array) with
+   composite PK (assessmentId, skillId) — §30 multi-origin skills.
+5. Single `UserAnswer` table with nullable kind-specific columns
+   (selectedOptionId / submittedCode / passedTestCount / totalTestCount);
+   `@unique(assessmentQuestionId)` = §43 double-submit protection.
+6. `AssessmentQuestion.replacedFromId` plain String (no FK): the replaced row
+   is deleted in the same transaction that inserts the replacement.
+7. `Assessment.mode` nullable (null for flows 1–3).
+8. `Question.assessmentFlow` (Part 3 "assessmentType" column, p49 mockup meta
+   line). Omitted on CodingQuestion (structurally CODING).
+9. Results: `finalScore`/`finalPercentage` written once at COMPLETED; skill
+   breakdown computed server-side at read time from UserAnswer (no
+   denormalised drift; §55 reconstructability).
+10. `CodingQuestion.language String` — no invented enum; validated against the
+    Judge0 language list in Phase 10.
+11. Link tables use composite primary keys, no surrogate ids.
+12. `Skill.isActive Boolean` (Part 5), not PublishStatus (C4 covers publishable
+    content only).
+13. `CodingQuestionJobTitle` link table added: §22 searches the coding library
+    by job title tags too.
+14. Delete semantics encoded as FK actions: taxonomy cascades downward
+    (Category→Area→JobTitle→JD, parents→link rows); everything referenced by
+    Assessment/AssessmentQuestion/UserAnswer/QuestionOption uses Restrict
+    (D-DEL enforced declaratively).
+
+## Phase 1 verification note
+
+`binaries.prisma.sh` (Prisma engine CDN) is unreachable from the build
+sandbox, so the native `prisma format/validate/generate/migrate` binaries
+cannot run there. Schema authoring was verified with the OFFICIAL engine
+compiled to WASM (`@prisma/prisma-schema-wasm` at the exact pinned engine
+version 7.1.1-3.c2990dca…, installed with --no-save, sandbox-only): prisma-fmt
+canonical, 0 lint diagnostics, validate OK, DMMF builds (22 models, 14 enums).
+`prisma migrate dev`, `prisma db seed` and `npm run db:check` require a real
+database + engine download and run wherever those are available (owner's
+machine or a network-permitted CI).
+
 ## Environment variables (names only — no values invented)
 
 | Variable | First needed | Scope |

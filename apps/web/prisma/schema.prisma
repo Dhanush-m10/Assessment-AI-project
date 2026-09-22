@@ -1,23 +1,531 @@
-// Prisma schema bootstrap (Phase 0).
+// Assessment AI - Prisma schema (Phase 1).
 //
-// Deliberately contains NO models yet. Business models (taxonomy, questions,
-// assessments, attempts, answers, history) are added in Phase 1 exactly as
-// resolved in docs/DECISIONS.md (C1-C10).
+// Governing decisions: docs/DECISIONS.md (C1-C10, D-*, A1-A4) and the
+// specification in docs/spec/. Key rules encoded here:
 //
-// The datasource URL is read from the DATABASE_URL environment variable.
-// Phase 0 never requires a real value: `prisma generate` does not connect to
-// the database. From Phase 1 onward the real Supabase connection string must
-// be provided in apps/web/.env.local (gitignored).
+//  * Exactly four assessment flows (AssessmentFlow); Flow 4 adds
+//    AssessmentMode. "Create Your Own Assessment" is configuration of
+//    BASIC_SKILLS_MCQ, never a fifth flow.
+//  * Taxonomy comes from the database: Category -> AreaOfInterest ->
+//    JobTitle. A TOPIC_TRACK category must not contain ROLE_BASED areas
+//    (enforced in the service layer; see integrity checks).
+//  * MCQ and coding library content are separate structures (C8); MCQ options
+//    are rows (C7) so `isCorrect` can be excluded per query.
+//  * Provenance per assessment question (C9); AI content lives only as
+//    server-side snapshots (C10) and never enters the permanent library.
+//  * Delete semantics (D-DEL): taxonomy cascades downward, but anything
+//    referenced by an Assessment / AssessmentQuestion / UserAnswer uses
+//    Restrict so history can never be orphaned or rewritten.
+//  * questionSnapshot is NOT NULL for every question (library and AI) so a
+//    later edit/delete of library content cannot mutate a past assessment
+//    (spec §48). It contains correct answers: every client read path must
+//    strip them before submission (spec §40).
 //
-// Note: `prisma generate` (npm run prisma:generate) downloads engine binaries
-// from binaries.prisma.sh, so it needs outbound network access. It is an
-// explicit step, not a postinstall hook, so `npm install` never fails on it.
+// Identity: Supabase auth.users owns it. Rows carry bare UUID strings
+// (decision A2); AdminProfile adds admin attributes only.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Direct (session-pooler) connection used by `prisma migrate dev`;
+  // Supabase's default transaction pooler breaks migrations.
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+/// Does a category's hierarchy include Job Titles (JOB_TRACK) or stop at
+/// Areas (TOPIC_TRACK, i.e. general assessments)?
+enum CategoryKind {
+  JOB_TRACK
+  TOPIC_TRACK
+}
+
+/// User-flow routing for an area: straight to assessment setup (GENERAL) or
+/// through Job Title selection (ROLE_BASED).
+enum AreaClassification {
+  GENERAL
+  ROLE_BASED
+}
+
+/// Exactly four flows. GENERAL is stored on AreaOfInterest-driven
+/// assessments; the other three are configured per JobTitle.
+enum AssessmentFlow {
+  GENERAL
+  BASIC_MCQ
+  BASIC_SKILLS_MCQ
+  CODING
+}
+
+/// Flow 4 only: MCQ mode reuses Flow 3 selection rules, Coding mode uses the
+/// coding library. Never a fifth flow.
+enum AssessmentMode {
+  MCQ
+  CODING
+}
+
+enum PublishStatus {
+  DRAFT
+  LIVE
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+/// JD experience bands (decision D-EXP). Stored on JobDescription only.
+enum ExperienceBand {
+  Y0_2
+  Y2_5
+  Y5_8
+}
+
+/// How a JD entered the library (C6).
+enum JdLibrarySource {
+  MANUAL
+  AI
+  CSV
+}
+
+/// Where an assessment's JD came from (C6). Must never affect question
+/// library eligibility (spec §9).
+enum AssessmentJdSource {
+  LIBRARY
+  AI_GENERATED
+  USER_PASTED
+}
+
+/// Provenance of each assessment question (C9, spec §51).
+enum QuestionSource {
+  QUESTION_LIBRARY
+  AI_GENERATED
+  CODING_LIBRARY
+  AI_CODING_GENERATED
+}
+
+enum TestCaseVisibility {
+  PUBLIC
+  HIDDEN
+}
+
+enum AdminRole {
+  ADMIN_ADD_ONLY
+  ADMIN_FULL
+}
+
+enum AssessmentStatus {
+  CONFIGURING
+  GENERATED
+  PREVIEW
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+/// Origins of a skill inside the final "Skills Being Tested" set (spec §30).
+/// A skill may have several origins at once, hence an array on
+/// AssessmentSkill.
+enum AssessmentSkillSource {
+  USER_SELECTED
+  JD
+  JOB_TITLE
+}
+
+// ---------------------------------------------------------------------------
+// Taxonomy
+// ---------------------------------------------------------------------------
+
+model Category {
+  id        String        @id @default(cuid())
+  name      String        @unique
+  slug      String        @unique
+  kind      CategoryKind
+  status    PublishStatus @default(DRAFT)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  areas     AreaOfInterest[]
+  assessments Assessment[]
+}
+
+model AreaOfInterest {
+  id             String             @id @default(cuid())
+  categoryId     String
+  name           String
+  slug           String             @unique
+  classification AreaClassification
+  status         PublishStatus      @default(DRAFT)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  category       Category           @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  jobTitles      JobTitle[]
+  questionAreas  QuestionArea[]
+  assessments    Assessment[]
+
+  @@unique([categoryId, name])
+  @@index([categoryId])
+}
+
+model JobTitle {
+  id              String          @id @default(cuid())
+  areaOfInterestId String
+  name            String
+  slug            String          @unique
+  assessmentFlow  AssessmentFlow
+  status          PublishStatus   @default(DRAFT)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  areaOfInterest  AreaOfInterest  @relation(fields: [areaOfInterestId], references: [id], onDelete: Cascade)
+  jobDescriptions JobDescription[]
+  questionLinks   QuestionJobTitle[]
+  codingLinks     CodingQuestionJobTitle[]
+  skills          JobTitleSkill[]
+  assessments     Assessment[]
+
+  @@unique([areaOfInterestId, name])
+  @@index([areaOfInterestId])
+}
+
+// ---------------------------------------------------------------------------
+// Skills, JDs
+// ---------------------------------------------------------------------------
+
+/// Canonical skill list. Names are unique both as-entered and normalized
+/// (decision D-NORM); only humans create skills.
+model Skill {
+  id             String              @id @default(cuid())
+  name           String              @unique
+  normalizedName String              @unique
+  slug           String              @unique
+  isActive       Boolean             @default(true)
+  questionSkills QuestionSkill[]
+  codingSkills   CodingQuestionSkill[]
+  jdSkills       JobDescriptionSkill[]
+  jobTitleSkills JobTitleSkill[]
+  assessmentSkills AssessmentSkill[]
+  assessmentQuestions AssessmentQuestion[]
+}
+
+model JobDescription {
+  id              String          @id @default(cuid())
+  jobTitleId      String
+  title           String
+  content         String
+  experienceBand  ExperienceBand
+  source          JdLibrarySource
+  status          PublishStatus   @default(DRAFT)
+  createdByUserId String?         @db.Uuid
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  jobTitle        JobTitle        @relation(fields: [jobTitleId], references: [id], onDelete: Cascade)
+  skills          JobDescriptionSkill[]
+  assessments     Assessment[]
+
+  @@index([jobTitleId])
+}
+
+model JobDescriptionSkill {
+  jobDescriptionId String
+  skillId          String
+  jobDescription   JobDescription @relation(fields: [jobDescriptionId], references: [id], onDelete: Cascade)
+  skill            Skill          @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([jobDescriptionId, skillId])
+  @@index([skillId])
+}
+
+model JobTitleSkill {
+  jobTitleId String
+  skillId    String
+  jobTitle   JobTitle @relation(fields: [jobTitleId], references: [id], onDelete: Cascade)
+  skill      Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([jobTitleId, skillId])
+  @@index([skillId])
+}
+
+// ---------------------------------------------------------------------------
+// Admin
+// ---------------------------------------------------------------------------
+
+/// Admin attributes only; identity lives in Supabase auth.users (C5).
+model AdminProfile {
+  userId   String    @id @db.Uuid
+  name     String
+  role     AdminRole
+  isActive Boolean   @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Question library (MCQ)
+// ---------------------------------------------------------------------------
+
+model Question {
+  id             String        @id @default(cuid())
+  questionText   String
+  difficulty     Difficulty
+  assessmentFlow AssessmentFlow
+  status         PublishStatus @default(DRAFT)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  options        QuestionOption[]
+  skills         QuestionSkill[]
+  areas          QuestionArea[]
+  jobTitles      QuestionJobTitle[]
+  history        UserQuestionHistory[]
+  assessmentQuestions AssessmentQuestion[]
+
+  /// Library search entry point: flow + difficulty + status (spec §50).
+  @@index([assessmentFlow, difficulty, status])
+}
+
+/// One row per MCQ option (C7). `isCorrect` must never reach the client
+/// before submission (spec §40).
+model QuestionOption {
+  id         String   @id @default(cuid())
+  questionId String
+  position   Int
+  text       String
+  isCorrect  Boolean  @default(false)
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  answers    UserAnswer[]
+
+  @@unique([questionId, position])
+}
+
+model QuestionSkill {
+  questionId String
+  skillId    String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  skill      Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, skillId])
+  @@index([skillId])
+}
+
+model QuestionArea {
+  questionId       String
+  areaOfInterestId String
+  question         Question       @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  areaOfInterest   AreaOfInterest @relation(fields: [areaOfInterestId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, areaOfInterestId])
+  @@index([areaOfInterestId])
+}
+
+model QuestionJobTitle {
+  questionId String
+  jobTitleId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  jobTitle   JobTitle @relation(fields: [jobTitleId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, jobTitleId])
+  @@index([jobTitleId])
+}
+
+// ---------------------------------------------------------------------------
+// Coding library
+// ---------------------------------------------------------------------------
+
+model CodingQuestion {
+  id               String          @id @default(cuid())
+  title            String
+  problemStatement String
+  difficulty       Difficulty
+  /// Free-form for now (e.g. "javascript"); validated against the Judge0
+  /// language list in Phase 10 (no invented enum).
+  language         String
+  starterCode      String?
+  constraints      String?
+  status           PublishStatus   @default(DRAFT)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  testCases        CodingTestCase[]
+  skills           CodingQuestionSkill[]
+  jobTitles        CodingQuestionJobTitle[]
+  history          UserQuestionHistory[]
+  assessmentQuestions AssessmentQuestion[]
+
+  @@index([difficulty, status])
+}
+
+model CodingTestCase {
+  id               String             @id @default(cuid())
+  codingQuestionId String
+  input            String
+  expectedOutput   String
+  visibility       TestCaseVisibility
+  codingQuestion   CodingQuestion     @relation(fields: [codingQuestionId], references: [id], onDelete: Cascade)
+
+  /// Run Code reads PUBLIC only; Submit reads all, server-side (spec §24).
+  @@index([codingQuestionId, visibility])
+}
+
+model CodingQuestionSkill {
+  codingQuestionId String
+  skillId          String
+  codingQuestion   CodingQuestion @relation(fields: [codingQuestionId], references: [id], onDelete: Cascade)
+  skill            Skill          @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([codingQuestionId, skillId])
+  @@index([skillId])
+}
+
+/// Job Title tags on coding challenges (spec §22: the coding library is
+/// searched by selected skills, JD skills AND job title tags).
+model CodingQuestionJobTitle {
+  codingQuestionId String
+  jobTitleId       String
+  codingQuestion   CodingQuestion @relation(fields: [codingQuestionId], references: [id], onDelete: Cascade)
+  jobTitle         JobTitle       @relation(fields: [jobTitleId], references: [id], onDelete: Cascade)
+
+  @@id([codingQuestionId, jobTitleId])
+  @@index([jobTitleId])
+}
+
+// ---------------------------------------------------------------------------
+// Assessments (the per-user concrete instance - decision A1)
+// ---------------------------------------------------------------------------
+
+model Assessment {
+  id                    String              @id @default(cuid())
+  userId                String              @db.Uuid
+  flow                  AssessmentFlow
+  /// Flow 4 only; null for flows 1-3.
+  mode                  AssessmentMode?
+  categoryId            String
+  areaOfInterestId      String
+  jobTitleId            String?
+  difficulty            Difficulty
+  /// Null for GENERAL (decision D-EXP).
+  experienceBand        ExperienceBand?
+  requestedQuestionCount Int
+  previewEnabled        Boolean
+  status                AssessmentStatus    @default(CONFIGURING)
+  /// JD reference and immutable content snapshot (spec §48); all null for
+  /// GENERAL assessments.
+  jdId                  String?
+  jdSource              AssessmentJdSource?
+  jdContentSnapshot     String?
+  /// Client-supplied idempotency key for "Generate Assessment" (spec §43).
+  clientRequestId       String?             @unique
+  /// Written once at COMPLETED; immutable afterwards (decision D-SCORE).
+  finalScore            Int?
+  finalPercentage       Float?
+  createdAt             DateTime            @default(now())
+  startedAt             DateTime?
+  completedAt           DateTime?
+  updatedAt             DateTime            @updatedAt
+
+  category         Category           @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  areaOfInterest   AreaOfInterest     @relation(fields: [areaOfInterestId], references: [id], onDelete: Restrict)
+  jobTitle         JobTitle?          @relation(fields: [jobTitleId], references: [id], onDelete: Restrict)
+  jd               JobDescription?    @relation(fields: [jdId], references: [id], onDelete: Restrict)
+  skills           AssessmentSkill[]
+  questions        AssessmentQuestion[]
+
+  @@index([userId, status])
+  @@index([userId, createdAt])
+}
+
+/// Final "Skills Being Tested" set. One row per skill; `sources` records
+/// every origin (spec §30).
+model AssessmentSkill {
+  assessmentId String
+  skillId      String
+  sources      AssessmentSkillSource[]
+  assessment   Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  skill        Skill      @relation(fields: [skillId], references: [id], onDelete: Restrict)
+
+  @@id([assessmentId, skillId])
+}
+
+/// Ordered question snapshot for one assessment (C10).
+/// Exactly one of libraryQuestionId / codingQuestionId is non-null
+/// (enforced in the service layer + integrity checks).
+model AssessmentQuestion {
+  id               String         @id @default(cuid())
+  assessmentId     String
+  sequence         Int
+  source           QuestionSource
+  libraryQuestionId String?
+  codingQuestionId  String?
+  /// Single scoring attribution (decision A4): the skill whose round-robin
+  /// quota this question filled. Null for GENERAL assessments.
+  skillId          String?
+  /// Full serve+score payload, server-side only. NOT NULL so library edits
+  /// can never mutate a past assessment (spec §48).
+  questionSnapshot Json
+  /// Lineage only (no FK): the replaced row is deleted in the same
+  /// transaction that inserts this one.
+  replacedFromId   String?
+  createdAt        DateTime       @default(now())
+
+  assessment      Assessment      @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  libraryQuestion Question?       @relation(fields: [libraryQuestionId], references: [id], onDelete: Restrict)
+  codingQuestion  CodingQuestion? @relation(fields: [codingQuestionId], references: [id], onDelete: Restrict)
+  skill           Skill?          @relation(fields: [skillId], references: [id], onDelete: Restrict)
+  answers         UserAnswer[]
+
+  /// Order stability + §55 "no duplicate AssessmentQuestion entries".
+  @@unique([assessmentId, sequence])
+  /// §36 duplicate prevention within one assessment.
+  @@unique([assessmentId, libraryQuestionId])
+  @@unique([assessmentId, codingQuestionId])
+  @@index([libraryQuestionId])
+  @@index([codingQuestionId])
+}
+
+// ---------------------------------------------------------------------------
+// Answers & history
+// ---------------------------------------------------------------------------
+
+/// One row per answered assessment question (unique constraint = §43
+/// double-submit protection). Kind-specific columns are nullable; the kind
+/// is derived from the assessment question's source.
+model UserAnswer {
+  id                   String            @id @default(cuid())
+  assessmentQuestionId String            @unique
+  userId               String            @db.Uuid
+  selectedOptionId     String?
+  submittedCode        String?
+  passedTestCount      Int?
+  totalTestCount       Int?
+  isCorrect            Boolean
+  /// 0/1 in V1 (decision D-SCORE).
+  score                Int
+  submittedAt          DateTime          @default(now())
+
+  assessmentQuestion AssessmentQuestion @relation(fields: [assessmentQuestionId], references: [id], onDelete: Restrict)
+  selectedOption     QuestionOption?    @relation(fields: [selectedOptionId], references: [id], onDelete: Restrict)
+
+  @@index([userId, submittedAt])
+}
+
+/// Explicit 30-day history (decision A3, spec §27/§30). Updated inside the
+/// submit transaction for library questions only; AI questions are never
+/// tracked long-term (spec §52).
+model UserQuestionHistory {
+  id              String    @id @default(cuid())
+  userId          String    @db.Uuid
+  questionId      String?
+  codingQuestionId String?
+  lastAnsweredAt  DateTime
+  lastCorrectAt   DateTime?
+  question        Question?       @relation(fields: [questionId], references: [id], onDelete: Restrict)
+  codingQuestion  CodingQuestion? @relation(fields: [codingQuestionId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, questionId])
+  @@unique([userId, codingQuestionId])
+  /// The 30-day exclusion scan: userId + recency of last correct answer.
+  @@index([userId, lastCorrectAt])
 }

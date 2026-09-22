@@ -8,7 +8,14 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "prisma:generate": "prisma generate"
+    "prisma:generate": "prisma generate",
+    "prisma:format": "prisma format",
+    "prisma:validate": "prisma validate",
+    "db:seed": "prisma db seed",
+    "db:check": "tsx scripts/check-integrity.ts"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",
@@ -27,6 +34,7 @@
     "postcss": "^8.0.0",
     "prisma": "^6.0.0",
     "tailwindcss": "^4.0.0",
+    "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   }
 }

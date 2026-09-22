@@ -23,5 +23,13 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    // Prisma seed and DB scripts run via tsx against a REAL database and
+    // reference the generated client. They are excluded from the app
+    // typecheck/build because the generated client does not exist until
+    // `prisma generate` runs (Phase 1+; requires engine download).
+    "prisma/seed.ts",
+    "scripts"
+  ]
 }
