@@ -1,0 +1,23 @@
+// Prisma schema bootstrap (Phase 0).
+//
+// Deliberately contains NO models yet. Business models (taxonomy, questions,
+// assessments, attempts, answers, history) are added in Phase 1 exactly as
+// resolved in docs/DECISIONS.md (C1-C10).
+//
+// The datasource URL is read from the DATABASE_URL environment variable.
+// Phase 0 never requires a real value: `prisma generate` does not connect to
+// the database. From Phase 1 onward the real Supabase connection string must
+// be provided in apps/web/.env.local (gitignored).
+//
+// Note: `prisma generate` (npm run prisma:generate) downloads engine binaries
+// from binaries.prisma.sh, so it needs outbound network access. It is an
+// explicit step, not a postinstall hook, so `npm install` never fails on it.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}

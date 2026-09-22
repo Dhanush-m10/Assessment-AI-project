@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Builds
+dist/
+build/
+
+# Environment — real values are NEVER committed.
+# Only .env.example files are tracked.
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Test output
+coverage/
+
+# TypeScript incremental build info
+*.tsbuildinfo
