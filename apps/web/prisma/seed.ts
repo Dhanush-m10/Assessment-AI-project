@@ -89,6 +89,23 @@ const jobTitles: { id: string; areaOfInterestId: string; name: string; assessmen
   { id: "jt_hr", areaOfInterestId: "area_hr", name: "HR Manager", assessmentFlow: "BASIC_MCQ", status: "LIVE" },
   { id: "jt_ceo", areaOfInterestId: "area_entrepreneurship", name: "CEO", assessmentFlow: "BASIC_MCQ", status: "LIVE" },
   { id: "jt_accountant", areaOfInterestId: "area_accounting", name: "Accountant", assessmentFlow: "BASIC_MCQ", status: "DRAFT" },
+  { id: "jt_graphic_designer", areaOfInterestId: "area_graphic", name: "Graphic Designer", assessmentFlow: "BASIC_SKILLS_MCQ", status: "LIVE" },
+
+{ id: "jt_financial_analyst", areaOfInterestId: "area_finance", name: "Financial Analyst", assessmentFlow: "BASIC_MCQ", status: "LIVE" },
+
+{ id: "jt_business_manager", areaOfInterestId: "area_leadership", name: "Business Manager", assessmentFlow: "BASIC_SKILLS_MCQ", status: "LIVE" },
+
+{ id: "jt_business_analyst", areaOfInterestId: "area_biz_analytics", name: "Business Analyst", assessmentFlow: "BASIC_MCQ", status: "LIVE" },
+
+{ id: "jt_healthcare_admin", areaOfInterestId: "area_health_mgmt", name: "Healthcare Administrator", assessmentFlow: "BASIC_MCQ", status: "LIVE" },
+
+{ id: "jt_nutritionist", areaOfInterestId: "area_nutrition", name: "Nutritionist", assessmentFlow: "BASIC_SKILLS_MCQ", status: "LIVE" },
+
+{ id: "jt_public_health_specialist", areaOfInterestId: "area_public_health", name: "Public Health Specialist", assessmentFlow: "BASIC_MCQ", status: "LIVE" },
+
+{ id: "jt_biotechnologist", areaOfInterestId: "area_biotech", name: "Biotechnologist", assessmentFlow: "BASIC_SKILLS_MCQ", status: "LIVE" },
+
+{ id: "jt_environmental_scientist", areaOfInterestId: "area_env_sci", name: "Environmental Scientist", assessmentFlow: "BASIC_SKILLS_MCQ", status: "LIVE" },
 ];
 
 const skills = [
