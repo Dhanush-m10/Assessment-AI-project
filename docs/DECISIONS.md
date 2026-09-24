@@ -130,7 +130,7 @@ machine or a network-permitted CI).
 | `DATABASE_URL` | Phase 1 | Server-only (apps/web) |
 | `DIRECT_URL` | Phase 1 (migrations via Supabase pooler) | Server-only (apps/web) |
 | `NEXT_PUBLIC_SUPABASE_URL` | Phase 2 | Browser-safe |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Phase 2 | Browser-safe |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Phase 2 | Browser-safe (current Supabase key model; legacy anon value accepted under this name) |
 | `SUPABASE_SERVICE_ROLE_KEY` | Phase 2 | Server-only, critical |
 | `OPENAI_API_KEY` | Phase 6 | Server-only (ai-service) |
 | `AI_SERVICE_URL` | Phase 6 | Server-only (apps/web) |

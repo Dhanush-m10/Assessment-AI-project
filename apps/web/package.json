@@ -12,13 +12,16 @@
     "prisma:format": "prisma format",
     "prisma:validate": "prisma validate",
     "db:seed": "prisma db seed",
-    "db:check": "tsx scripts/check-integrity.ts"
+    "db:check": "tsx scripts/check-integrity.ts",
+    "db:make-admin": "tsx scripts/make-admin.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.1",
     "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
