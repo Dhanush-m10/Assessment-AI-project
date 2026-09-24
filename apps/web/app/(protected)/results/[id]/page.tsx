@@ -59,8 +59,8 @@ export default async function ResultDetailPage({
             <dd className="mt-0.5 font-bold text-slate-900">{result.status}</dd>
           </div>
           <div>
-            <dt className="text-slate-500">Difficulty</dt>
-            <dd className="mt-0.5 font-bold text-slate-900">{result.difficulty}</dd>
+            <dt className="text-slate-500">Questions</dt>
+            <dd className="mt-0.5 font-bold text-slate-900">{result.requestedQuestionCount}</dd>
           </div>
           <div>
             <dt className="text-slate-500">Date</dt>
@@ -76,7 +76,9 @@ export default async function ResultDetailPage({
               {result.correct} of {result.total} answered questions correct
               {result.experienceBand ? ` · ${bandLabel(result.experienceBand)}` : ""}.
             </p>
-            {result.perSkill.length > 0 && (
+            {/* General flow has no skill attribution (D-GENSKILL/A4): skill
+                breakdowns are shown only for skill-based flows. */}
+            {result.flow !== "GENERAL" && result.perSkill.length > 0 && (
               <ul className="mt-6 space-y-4">
                 {result.perSkill.map((s) => (
                   <li key={s.name}>
