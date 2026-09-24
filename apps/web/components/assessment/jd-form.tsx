@@ -19,6 +19,7 @@ export function JdForm({
   count,
   preview,
   jds,
+  skillIds,
 }: {
   areaId: string;
   jobTitleId: string;
@@ -27,6 +28,7 @@ export function JdForm({
   count: number;
   preview: boolean;
   jds: LibraryJd[];
+  skillIds?: string;
 }) {
   const [state, formAction] = useActionState(startBasicMcqAssessment, {});
   const [mode, setMode] = useState<"LIBRARY" | "USER_PASTED">(jds.length ? "LIBRARY" : "USER_PASTED");
@@ -55,6 +57,7 @@ export function JdForm({
         <input type="hidden" name="experience" value={experience} />
         <input type="hidden" name="count" value={String(count)} />
         <input type="hidden" name="preview" value={preview ? "on" : "off"} />
+        {skillIds ? <input type="hidden" name="skillIds" value={skillIds} /> : null}
         <input type="hidden" name="clientRequestId" value={requestId} />
         <input type="hidden" name="jdMode" value={mode} />
         <input type="hidden" name="jdId" value={mode === "LIBRARY" ? jdId : ""} />

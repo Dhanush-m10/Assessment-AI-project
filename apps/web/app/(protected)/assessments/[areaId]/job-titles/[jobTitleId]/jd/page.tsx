@@ -4,10 +4,13 @@ import { requireUser } from "@/lib/auth/require-user";
 import {
   listLibraryJds,
   parseExperience,
-  validateBasicContext,
+  validateRoleContext,
 } from "@/lib/assessment/basic-mcq";
 import { parseCount, parseDifficulty } from "@/lib/assessment/general";
+import { getPrisma } from "@/lib/prisma";
 import { Card, EmptyState } from "@/components/ui/card";
+import { SkillChip } from "@/components/ui/badges";
+import { StepIndicator } from "@/components/ui/step-indicator";
 import { JdForm } from "@/components/assessment/jd-form";
 import { EXPERIENCE_META } from "@/components/assessment/experience-meta";
 
@@ -15,11 +18,15 @@ export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Job Description · Assessment AI" };
 
+type Skill = { id: string; name: string };
+
 /**
- * JD finalization step for Basic MCQ. Config arrives via searchParams and is
- * re-validated here (difficulty enum, experience enum, count 1–50) and again
- * inside the creation action. Library JDs are filtered by job title +
- * experience band + LIVE; skills are shown from JobDescriptionSkill.
+ * JD finalization step (BASIC_MCQ and BASIC_SKILLS_MCQ). Config arrives via
+ * searchParams and is re-validated here (difficulty enum, experience enum,
+ * count) and again inside the creation action. The flow itself comes from
+ * the database, never from the client. For BASIC_SKILLS_MCQ the `skills`
+ * param is cross-checked against the job title's own active skills, so ids
+ * cannot be injected; unknown ids are dropped and re-checked at creation.
  */
 export default async function JdPage({
   params,
@@ -31,6 +38,7 @@ export default async function JdPage({
     experience?: string;
     count?: string;
     preview?: string;
+    skills?: string;
   }>;
 }) {
   const { areaId, jobTitleId } = await params;
@@ -42,12 +50,23 @@ export default async function JdPage({
   const count = parseCount(sp.count ?? "");
   const preview = sp.preview === "on";
 
-  const ctxResult = await validateBasicContext(areaId, jobTitleId);
-  if (!ctxResult.ok && ctxResult.reason !== "wrong-flow") notFound();
+  const ctxResult = await validateRoleContext(areaId, jobTitleId);
+  if (!ctxResult.ok) notFound();
+  if (
+    ctxResult.context.assessmentFlow !== "BASIC_MCQ" &&
+    ctxResult.context.assessmentFlow !== "BASIC_SKILLS_MCQ"
+  ) {
+    notFound();
+  }
+  const skillsFlow = ctxResult.context.assessmentFlow === "BASIC_SKILLS_MCQ";
 
   const setupHref = `/assessments/${areaId}/job-titles/${jobTitleId}`;
+  const configQuery = `difficulty=${sp.difficulty ?? ""}&experience=${sp.experience ?? ""}&count=${sp.count ?? ""}&preview=${preview ? "on" : "off"}`;
+  const backHref = skillsFlow
+    ? `/assessments/${areaId}/job-titles/${jobTitleId}/skills?${configQuery}`
+    : setupHref;
 
-  if (!ctxResult.ok || !difficulty || !experience || count === null) {
+  if (!difficulty || !experience || count === null) {
     return (
       <div className="mx-auto max-w-2xl">
         <Card className="p-8">
@@ -68,18 +87,42 @@ export default async function JdPage({
     );
   }
 
+  const requestedSkillIds = skillsFlow
+    ? (sp.skills ?? "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean)
+    : [];
+  const selectedSkills: Skill[] = requestedSkillIds.length
+    ? ((await getPrisma().skill.findMany({
+        where: {
+          id: { in: requestedSkillIds },
+          isActive: true,
+          jobTitleSkills: { some: { jobTitleId } },
+        },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      })) as Skill[])
+    : [];
+  const skillIdsParam = selectedSkills.map((s) => s.id).join(",");
+
   const jds = await listLibraryJds(jobTitleId, experience);
   const experienceLabel =
     EXPERIENCE_META.find((e) => e.value === experience)?.label ?? experience;
 
+  const steps = skillsFlow
+    ? ["Job title", "Setup", "Skills", "Job description", "Preview"]
+    : ["Job title", "Setup", "Job description", "Preview"];
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <Link
-        href={setupHref}
+        href={backHref}
         className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:underline"
       >
-        Back to setup
+        {skillsFlow ? "Back to skills" : "Back to setup"}
       </Link>
+      <StepIndicator steps={steps} current={steps.length - 2} />
       <Card className="p-8">
         <p className="text-sm font-semibold text-blue-600">{ctxResult.context.areaName}</p>
         <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">
@@ -110,6 +153,20 @@ export default async function JdPage({
           </div>
         </dl>
 
+        {selectedSkills.length > 0 && (
+          <div className="mt-4">
+            <p className="text-sm text-slate-500">
+              Prioritised skills — questions are split evenly across your final skill set
+              (selected first, then job-description and job-title skills):
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {selectedSkills.map((s) => (
+                <SkillChip key={s.id}>{s.name}</SkillChip>
+              ))}
+            </div>
+          </div>
+        )}
+
         {jds.length === 0 && (
           <p className="mt-4 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800">
             No library JDs exist for this job title at {experienceLabel} — paste the JD text
@@ -126,6 +183,7 @@ export default async function JdPage({
             count={count}
             preview={preview}
             jds={jds}
+            skillIds={skillIdsParam}
           />
         </div>
       </Card>

@@ -34,6 +34,45 @@ export type BasicContext = {
   categoryId: string;
 };
 
+export type RoleContext = BasicContext & { assessmentFlow: string };
+
+export type RoleContextResult =
+  | { ok: true; context: RoleContext }
+  | { ok: false; reason: "invalid-area" | "invalid-job-title" };
+
+/**
+ * Flow-aware chain validation: the DATABASE decides which flow a job title
+ * runs (JobTitle.assessmentFlow); the client never chooses it.
+ */
+export async function validateRoleContext(
+  areaId: string,
+  jobTitleId: string,
+): Promise<RoleContextResult> {
+  const area = (await getPrisma().areaOfInterest.findFirst({
+    where: { id: areaId, status: "LIVE", classification: "ROLE_BASED" },
+    select: { id: true, name: true, categoryId: true },
+  })) as { id: string; name: string; categoryId: string } | null;
+  if (!area) return { ok: false, reason: "invalid-area" };
+
+  const jobTitle = (await getPrisma().jobTitle.findFirst({
+    where: { id: jobTitleId, areaOfInterestId: area.id, status: "LIVE" },
+    select: { id: true, name: true, assessmentFlow: true },
+  })) as { id: string; name: string; assessmentFlow: string } | null;
+  if (!jobTitle) return { ok: false, reason: "invalid-job-title" };
+
+  return {
+    ok: true,
+    context: {
+      areaId: area.id,
+      areaName: area.name,
+      jobTitleId: jobTitle.id,
+      jobTitleName: jobTitle.name,
+      categoryId: area.categoryId,
+      assessmentFlow: jobTitle.assessmentFlow,
+    },
+  };
+}
+
 export type ContextResult =
   | { ok: true; context: BasicContext }
   | { ok: false; reason: "invalid-area" | "invalid-job-title" | "wrong-flow" };
@@ -66,6 +105,16 @@ export async function validateBasicContext(
       categoryId: area.categoryId,
     },
   };
+}
+
+/** Active skills attached to a job title (DB-owned; users never invent skills). */
+export async function listTitleSkills(jobTitleId: string): Promise<{ id: string; name: string }[]> {
+  const rows = (await getPrisma().jobTitleSkill.findMany({
+    where: { jobTitleId, skill: { isActive: true } },
+    select: { skill: { select: { id: true, name: true } } },
+    orderBy: { skill: { name: "asc" } },
+  })) as { skill: { id: string; name: string } }[];
+  return rows.map((r) => r.skill);
 }
 
 export type LibraryJd = {
@@ -176,6 +225,135 @@ export async function createBasicMcqAssessment(args: {
     previewEnabled: args.previewEnabled,
     jd: jdPayload,
     selection,
+  });
+  return result;
+}
+
+export type CreateRoleResult =
+  | { ok: true; assessmentId: string; status: "PREVIEW" | "IN_PROGRESS" }
+  | { ok: false; reason: "insufficient"; available: number }
+  | { ok: false; reason: "invalid-area" | "invalid-job-title" | "unsupported-flow" }
+  | { ok: false; reason: "invalid-jd"; message: string };
+
+/**
+ * Role-based creation for BASIC_MCQ and BASIC_SKILLS_MCQ. The flow comes from
+ * the database (JobTitle.assessmentFlow), never from the client.
+ *
+ * BASIC_SKILLS_MCQ (D-DIST): final skills = user-selected (validated against
+ * job-title + JD skills) ordered first, then JD-only skills, then job-title
+ * leftovers; round-robin even split across that order; each question's
+ * AssessmentQuestion.skillId records the quota it filled (A4) and
+ * AssessmentSkill rows record the tier sources.
+ */
+export async function createRoleAssessment(args: {
+  userId: string;
+  areaId: string;
+  jobTitleId: string;
+  difficulty: DifficultyValue;
+  experience: ExperienceBandValue;
+  count: number;
+  previewEnabled: boolean;
+  jd: JdChoice;
+  clientRequestId: string;
+  selectedSkillIds: string[];
+}): Promise<CreateRoleResult> {
+  const ctxResult = await validateRoleContext(args.areaId, args.jobTitleId);
+  if (!ctxResult.ok) return { ok: false, reason: ctxResult.reason };
+  const ctx = ctxResult.context;
+  if (ctx.assessmentFlow !== "BASIC_MCQ" && ctx.assessmentFlow !== "BASIC_SKILLS_MCQ") {
+    return { ok: false, reason: "unsupported-flow" };
+  }
+
+  let jdPayload: { jdId: string | null; jdSource: "LIBRARY" | "USER_PASTED"; content: string };
+  let jdSkillIds: string[] = [];
+
+  if (args.jd.source === "LIBRARY") {
+    const jd = (await getPrisma().jobDescription.findFirst({
+      where: {
+        id: args.jd.jdId,
+        jobTitleId: ctx.jobTitleId,
+        experienceBand: args.experience,
+        status: "LIVE",
+      },
+      select: { id: true, content: true, skills: { select: { skillId: true } } },
+    })) as { id: string; content: string; skills: { skillId: string }[] } | null;
+    if (!jd) {
+      return {
+        ok: false,
+        reason: "invalid-jd",
+        message: "That job description is not available for this job title and experience band.",
+      };
+    }
+    jdPayload = { jdId: jd.id, jdSource: "LIBRARY", content: jd.content };
+    jdSkillIds = jd.skills.map((sk) => sk.skillId);
+  } else {
+    const content = args.jd.content.trim();
+    if (content.length === 0) {
+      return { ok: false, reason: "invalid-jd", message: "Pasted job description is empty." };
+    }
+    if (content.length > PASTED_JD_MAX_CHARS) {
+      return {
+        ok: false,
+        reason: "invalid-jd",
+        message: `Pasted job description is too long (max ${PASTED_JD_MAX_CHARS} characters).`,
+      };
+    }
+    jdPayload = { jdId: null, jdSource: "USER_PASTED", content };
+  }
+
+  const isSkillsFlow = ctx.assessmentFlow === "BASIC_SKILLS_MCQ";
+  let quotaSkills: string[] | undefined;
+  let skillSources: Record<string, ("USER_SELECTED" | "JD" | "JOB_TITLE")[]> | undefined;
+
+  if (isSkillsFlow) {
+    const titleSkills = (await listTitleSkills(ctx.jobTitleId)).map((sk) => sk.id);
+    const allowed = new Set([...titleSkills, ...jdSkillIds]);
+    // Client-selected ids are untrusted: intersect with DB-owned skill sets.
+    const userSelected = args.selectedSkillIds.filter((id) => allowed.has(id));
+    const ordered = [
+      ...userSelected,
+      ...jdSkillIds.filter((id) => !userSelected.includes(id)),
+      ...titleSkills.filter((id) => !userSelected.includes(id) && !jdSkillIds.includes(id)),
+    ];
+    if (ordered.length === 0) {
+      return {
+        ok: false,
+        reason: "invalid-jd",
+        message: "This job title has no skills configured yet, so a skills-based assessment cannot be built.",
+      };
+    }
+    quotaSkills = ordered;
+    skillSources = {};
+    for (const id of ordered) {
+      const sources: ("USER_SELECTED" | "JD" | "JOB_TITLE")[] = [];
+      if (userSelected.includes(id)) sources.push("USER_SELECTED");
+      if (jdSkillIds.includes(id)) sources.push("JD");
+      if (titleSkills.includes(id)) sources.push("JOB_TITLE");
+      skillSources[id] = sources;
+    }
+  }
+
+  const result = await createAssessment({
+    userId: args.userId,
+    clientRequestId: args.clientRequestId,
+    flow: isSkillsFlow ? "BASIC_SKILLS_MCQ" : "BASIC_MCQ",
+    categoryId: ctx.categoryId,
+    areaId: ctx.areaId,
+    jobTitleId: ctx.jobTitleId,
+    difficulty: args.difficulty,
+    experienceBand: args.experience,
+    count: args.count,
+    previewEnabled: args.previewEnabled,
+    jd: jdPayload,
+    selection: {
+      userId: args.userId,
+      flow: isSkillsFlow ? "BASIC_SKILLS_MCQ" : "BASIC_MCQ",
+      difficulty: args.difficulty,
+      jobTitleId: ctx.jobTitleId,
+      preferredSkillIds: jdSkillIds,
+    },
+    quotaSkills,
+    skillSources,
   });
   return result;
 }

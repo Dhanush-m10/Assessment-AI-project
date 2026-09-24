@@ -11,7 +11,7 @@ import {
   submitMcqAssessment,
 } from "@/lib/assessment/general";
 import {
-  createBasicMcqAssessment,
+  createRoleAssessment,
   parseExperience,
   type JdChoice,
 } from "@/lib/assessment/basic-mcq";
@@ -98,7 +98,12 @@ export async function startBasicMcqAssessment(
     return { error: "Choose a job description from the library or paste one." };
   }
 
-  const result = await createBasicMcqAssessment({
+  const selectedSkillIds = String(formData.get("skillIds") ?? "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  const result = await createRoleAssessment({
     userId: user.id,
     areaId,
     jobTitleId,
@@ -108,6 +113,7 @@ export async function startBasicMcqAssessment(
     previewEnabled,
     jd,
     clientRequestId,
+    selectedSkillIds,
   });
 
   if (!result.ok) {
@@ -117,9 +123,12 @@ export async function startBasicMcqAssessment(
     if (result.reason === "invalid-jd") {
       return { error: result.message };
     }
+    if (result.reason === "unsupported-flow") {
+      return { error: "This job title runs a flow that is not available yet." };
+    }
     return {
       error:
-        "This job title or area is not available for Basic MCQ assessments. Please choose another.",
+        "This job title or area is not available for this assessment flow. Please choose another.",
     };
   }
   redirect(

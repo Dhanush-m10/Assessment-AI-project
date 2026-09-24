@@ -1,19 +1,20 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { validateBasicContext } from "@/lib/assessment/basic-mcq";
+import { validateRoleContext } from "@/lib/assessment/basic-mcq";
 import { Card, EmptyState } from "@/components/ui/card";
 import { SetupForm } from "@/components/assessment/setup-form";
+import { StepIndicator } from "@/components/ui/step-indicator";
 import { IconArrowRight } from "@/components/ui/icons";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "Basic MCQ Setup · Assessment AI" };
+export const metadata = { title: "Assessment Setup · Assessment AI" };
 
 /**
- * Basic MCQ setup for one database-validated job title. validateBasicContext
- * re-checks the whole chain (area LIVE + ROLE_BASED, title LIVE + belongs to
- * area + flow BASIC_MCQ) — titles configured for other flows get a scope
- * card instead of a setup form.
+ * Role-based setup. The DATABASE decides the flow (JobTitle.assessmentFlow):
+ * BASIC_MCQ continues to the JD step, BASIC_SKILLS_MCQ to the skills step,
+ * anything else shows a coming-soon state. Steps are labelled so the user
+ * always knows where they are in the chain.
  */
 export default async function JobTitleSetupPage({
   params,
@@ -21,11 +22,15 @@ export default async function JobTitleSetupPage({
   params: Promise<{ areaId: string; jobTitleId: string }>;
 }) {
   const { areaId, jobTitleId } = await params;
-  const result = await validateBasicContext(areaId, jobTitleId);
+  const result = await validateRoleContext(areaId, jobTitleId);
 
-  // Unknown area/title pairs 404; known-but-wrong-flow gets the scope card.
-  if (!result.ok && result.reason === "invalid-area") notFound();
-  if (!result.ok && result.reason === "invalid-job-title") notFound();
+  if (!result.ok) notFound();
+  const { assessmentFlow } = result.context;
+  const implemented = assessmentFlow === "BASIC_MCQ" || assessmentFlow === "BASIC_SKILLS_MCQ";
+  const steps =
+    assessmentFlow === "BASIC_SKILLS_MCQ"
+      ? ["Job title", "Setup", "Skills", "Job description", "Preview"]
+      : ["Job title", "Setup", "Job description", "Preview"];
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -35,35 +40,41 @@ export default async function JobTitleSetupPage({
       >
         Back to job titles
       </Link>
+      <StepIndicator steps={steps} current={1} />
       <Card className="p-8">
-        {result.ok ? (
+        {implemented ? (
           <>
             <p className="text-sm font-semibold text-blue-600">{result.context.areaName}</p>
             <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">
               {result.context.jobTitleName}
             </h1>
             <p className="mt-2 text-sm text-slate-500">
-              Configure your Basic MCQ assessment. Questions are selected from the live
-              library for this job title at your chosen difficulty and experience band.
+              {assessmentFlow === "BASIC_SKILLS_MCQ"
+                ? "Configure your Basic + Skills assessment. Questions are allocated round-robin across the skills you confirm in the next step."
+                : "Configure your Basic MCQ assessment. Questions are selected from the live library for this job title at your chosen difficulty and experience band."}
             </p>
             <div className="mt-6">
               <SetupForm
                 showExperience
-                hrefFor={(p) =>
-                  `/assessments/${areaId}/job-titles/${jobTitleId}/jd?difficulty=${p.difficulty}&experience=${p.experience}&count=${p.count}&preview=${p.preview ? "on" : "off"}`
-                }
+                hrefFor={(p) => {
+                  const base = `/assessments/${areaId}/job-titles/${jobTitleId}`;
+                  const query = `difficulty=${p.difficulty}&experience=${p.experience}&count=${p.count}&preview=${p.preview ? "on" : "off"}`;
+                  return assessmentFlow === "BASIC_SKILLS_MCQ"
+                    ? `${base}/skills?${query}`
+                    : `${base}/jd?${query}`;
+                }}
               />
             </div>
           </>
         ) : (
           <>
             <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">
-              Not available in this flow
+              {result.context.jobTitleName}
             </h1>
             <EmptyState
               className="mt-4"
-              title="Different assessment flow"
-              message="This job title is configured for another assessment flow (skills-based or coding), which arrives in a later phase. Basic MCQ job titles are available now."
+              title="Coming soon"
+              message="This job title runs a flow that is not available in the prototype yet (e.g. coding assessments). Basic MCQ and Basic + Skills job titles are available now."
               action={
                 <Link
                   href={`/assessments/${areaId}/job-titles`}

@@ -28,10 +28,12 @@ import type { DifficultyValue } from "@/lib/assessment/limits";
 
 export type SelectionContext = {
   userId: string;
-  flow: "GENERAL" | "BASIC_MCQ";
+  flow: "GENERAL" | "BASIC_MCQ" | "BASIC_SKILLS_MCQ";
   difficulty: DifficultyValue;
   areaId?: string;
   jobTitleId?: string;
+  /** Hard skill filter (QuestionSkill) used for per-skill quota fills. */
+  skillId?: string;
   preferredSkillIds?: string[];
   /** Replacement candidate rule (never attempted / previously incorrect). */
   forReplacement?: boolean;
@@ -57,6 +59,7 @@ export async function selectEligibleQuestions(
       ...(ctx.flow === "GENERAL"
         ? { areas: { some: { areaOfInterestId: ctx.areaId } } }
         : { jobTitles: { some: { jobTitleId: ctx.jobTitleId } } }),
+      ...(ctx.skillId ? { skills: { some: { skillId: ctx.skillId } } } : {}),
       ...(ctx.excludeQuestionIds?.length
         ? { id: { notIn: ctx.excludeQuestionIds } }
         : {}),
@@ -102,10 +105,54 @@ export async function selectEligibleQuestions(
   });
 }
 
+export type QuotaSelection = {
+  selected: (EligibleQuestion & { quotaSkillId: string })[];
+  available: number;
+};
+
+/**
+ * D-DIST round-robin: cycles the ordered final-skill list assigning one
+ * question per skill per pass (even split, remainder to earlier skills),
+ * skipping exhausted skills. Deterministic: pools are id-asc ordered and the
+ * skill order is supplied by the caller (tier order: user-selected, JD,
+ * job title). Returns fewer than `count` only when the library is exhausted
+ * (controlled insufficient state upstream - never silent shortening).
+ */
+export async function selectWithQuotas(
+  base: Omit<SelectionContext, "skillId" | "preferredSkillIds">,
+  orderedSkillIds: string[],
+  count: number,
+): Promise<QuotaSelection> {
+  const pools = new Map<string, EligibleQuestion[]>();
+  for (const skillId of orderedSkillIds) {
+    pools.set(skillId, await selectEligibleQuestions({ ...base, skillId }));
+  }
+  const taken = new Set<string>();
+  const selected: (EligibleQuestion & { quotaSkillId: string })[] = [];
+  let progressed = true;
+  while (selected.length < count && progressed) {
+    progressed = false;
+    for (const skillId of orderedSkillIds) {
+      if (selected.length >= count) break;
+      const pool = pools.get(skillId) ?? [];
+      const next = pool.find((q) => !taken.has(q.id));
+      if (next) {
+        taken.add(next.id);
+        selected.push({ ...next, quotaSkillId: skillId });
+        progressed = true;
+      }
+    }
+  }
+  const available = new Set(
+    [...pools.values()].flat().map((q) => q.id),
+  ).size;
+  return { selected, available };
+}
+
 export type AssessmentDraft = {
   userId: string;
   clientRequestId: string;
-  flow: "GENERAL" | "BASIC_MCQ";
+  flow: "GENERAL" | "BASIC_MCQ" | "BASIC_SKILLS_MCQ";
   categoryId: string;
   areaId: string;
   jobTitleId: string | null;
@@ -115,6 +162,10 @@ export type AssessmentDraft = {
   previewEnabled: boolean;
   jd: { jdId: string | null; jdSource: "LIBRARY" | "USER_PASTED"; content: string } | null;
   selection: SelectionContext;
+  /** D-DIST: ordered final skills; switches creation to quota selection. */
+  quotaSkills?: string[];
+  /** Sources per final skill for AssessmentSkill rows (D-DIST tiers). */
+  skillSources?: Record<string, ("USER_SELECTED" | "JD" | "JOB_TITLE")[]>;
 };
 
 export type CreateResult =
@@ -150,11 +201,30 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
   })) as { id: string } | null;
   if (!area) return { ok: false, reason: "invalid-area" };
 
-  const eligible = await selectEligibleQuestions(args.selection);
-  if (eligible.length < args.count) {
-    return { ok: false, reason: "insufficient", available: eligible.length };
+  let selected: (EligibleQuestion & { quotaSkillId: string | null })[];
+  if (args.quotaSkills?.length) {
+    const quota = await selectWithQuotas(
+      {
+        userId: args.selection.userId,
+        flow: args.selection.flow,
+        difficulty: args.selection.difficulty,
+        areaId: args.selection.areaId,
+        jobTitleId: args.selection.jobTitleId,
+      },
+      args.quotaSkills,
+      args.count,
+    );
+    if (quota.selected.length < args.count) {
+      return { ok: false, reason: "insufficient", available: quota.available };
+    }
+    selected = quota.selected;
+  } else {
+    const eligible = await selectEligibleQuestions(args.selection);
+    if (eligible.length < args.count) {
+      return { ok: false, reason: "insufficient", available: eligible.length };
+    }
+    selected = eligible.slice(0, args.count).map((q) => ({ ...q, quotaSkillId: null }));
   }
-  const selected = eligible.slice(0, args.count);
   const initialStatus = args.previewEnabled ? "PREVIEW" : "IN_PROGRESS";
 
   const created = (await db.$transaction(async (tx: PrismaClient) => {
@@ -186,13 +256,23 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
         source: "QUESTION_LIBRARY",
         libraryQuestionId: q.id,
         codingQuestionId: null,
-        skillId: null, // A4: single primary skill only where round-robin applies
+        // A4: single primary skill = the quota this question filled.
+        skillId: q.quotaSkillId,
         questionSnapshot: buildSnapshot({
           questionText: q.questionText,
           options: q.options,
         }) as unknown as Record<string, unknown>,
       })),
     });
+    if (args.quotaSkills?.length) {
+      await tx.assessmentSkill.createMany({
+        data: args.quotaSkills.map((skillId) => ({
+          assessmentId: assessment.id,
+          skillId,
+          sources: args.skillSources?.[skillId] ?? ["JOB_TITLE"],
+        })),
+      });
+    }
     return assessment;
   })) as { id: string };
 
@@ -219,6 +299,7 @@ export async function replaceQuestion(
     select: {
       id: true,
       sequence: true,
+      skillId: true,
       assessment: {
         select: {
           id: true,
@@ -234,6 +315,7 @@ export async function replaceQuestion(
   })) as {
     id: string;
     sequence: number;
+    skillId: string | null;
     assessment: {
       id: string;
       flow: string;
@@ -256,11 +338,17 @@ export async function replaceQuestion(
 
   const candidates = await selectEligibleQuestions({
     userId,
-    flow: assessment.flow === "GENERAL" ? "GENERAL" : "BASIC_MCQ",
+    flow:
+      assessment.flow === "BASIC_SKILLS_MCQ"
+        ? "BASIC_SKILLS_MCQ"
+        : assessment.flow === "GENERAL"
+          ? "GENERAL"
+          : "BASIC_MCQ",
     difficulty: assessment.difficulty,
     areaId: assessment.areaOfInterestId,
     jobTitleId: assessment.jobTitleId ?? undefined,
     preferredSkillIds,
+    skillId: target.skillId ?? undefined,
     forReplacement: true,
     excludeQuestionIds: assessment.questions
       .map((q) => q.libraryQuestionId)
@@ -280,7 +368,7 @@ export async function replaceQuestion(
         source: "QUESTION_LIBRARY",
         libraryQuestionId: next.id,
         codingQuestionId: null,
-        skillId: null,
+        skillId: target.skillId,
         replacedFromId: target.id,
         questionSnapshot: buildSnapshot({
           questionText: next.questionText,

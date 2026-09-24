@@ -228,7 +228,14 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
 export type LandingSection = {
   categoryId: string;
   title: string;
-  areas: { id: string; name: string; meta: string }[];
+  categorySlug: string;
+  areas: {
+    id: string;
+    name: string;
+    meta: string;
+    classification: string;
+    flows: string[];
+  }[];
 };
 
 /** New Assessment landing: one carousel section per LIVE category. */
@@ -241,7 +248,7 @@ export async function getLandingSections(): Promise<LandingSection[]> {
       id: string;
       name: string;
       classification: string;
-      jobTitles: { id: string }[];
+      jobTitles: { id: string; assessmentFlow: string }[];
     }[];
   };
   const categories = (await prisma().category.findMany({
@@ -258,7 +265,10 @@ export async function getLandingSections(): Promise<LandingSection[]> {
           id: true,
           name: true,
           classification: true,
-          jobTitles: { where: { status: "LIVE" }, select: { id: true } },
+          jobTitles: {
+            where: { status: "LIVE" },
+            select: { id: true, assessmentFlow: true },
+          },
         },
       },
     },
@@ -269,6 +279,7 @@ export async function getLandingSections(): Promise<LandingSection[]> {
     .map((c) => ({
       categoryId: c.id,
       title: `${c.name} Assessments`,
+      categorySlug: c.slug,
       areas: c.areas.map((a) => ({
         id: a.id,
         name: a.name,
@@ -276,6 +287,8 @@ export async function getLandingSections(): Promise<LandingSection[]> {
           a.classification === "ROLE_BASED"
             ? `${a.jobTitles.length} role${a.jobTitles.length === 1 ? "" : "s"}`
             : "General assessment",
+        classification: a.classification,
+        flows: [...new Set(a.jobTitles.map((t) => t.assessmentFlow))],
       })),
     }));
 }
