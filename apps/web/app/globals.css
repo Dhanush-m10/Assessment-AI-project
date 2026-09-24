@@ -23,6 +23,43 @@
   }
 }
 
+/* Landing hero: gentle vertical float WITHOUT rotation, for readable cards
+   (motion-safe gated at usage). */
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+/* Landing hero: slow background-position drift for the gradient panel
+   (motion-safe gated at usage). */
+@keyframes gradient-pan {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+/* Landing hero: one-shot gentle entrance — fade + slide up (motion-safe
+   gated at usage). */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* Accessibility: collapse all motion for users who prefer reduced motion. */
 @media (prefers-reduced-motion: reduce) {
   *,
