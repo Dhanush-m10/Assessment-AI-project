@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth/require-user";
 import { listTitleSkills, parseExperience, validateRoleContext } from "@/lib/assessment/basic-mcq";
 import { parseCount, parseDifficulty } from "@/lib/assessment/general";
+import { parseCodingCount } from "@/lib/assessment/limits";
 import { Card, EmptyState } from "@/components/ui/card";
 import { StepIndicator } from "@/components/ui/step-indicator";
 import { SkillsForm } from "@/components/assessment/skills-form";
@@ -36,12 +37,14 @@ export default async function SkillSelectionPage({
 
   const ctxResult = await validateRoleContext(areaId, jobTitleId);
   if (!ctxResult.ok) notFound();
-  if (ctxResult.context.assessmentFlow !== "BASIC_SKILLS_MCQ") notFound();
+  const flow = ctxResult.context.assessmentFlow;
+  if (flow !== "BASIC_SKILLS_MCQ" && flow !== "CODING") notFound();
+  const isCoding = flow === "CODING";
 
   const setupHref = `/assessments/${areaId}/job-titles/${jobTitleId}`;
   const difficulty = parseDifficulty(sp.difficulty ?? "");
   const experience = parseExperience(sp.experience ?? "");
-  const count = parseCount(sp.count ?? "");
+  const count = isCoding ? parseCodingCount(sp.count ?? "") : parseCount(sp.count ?? "");
   const preview = sp.preview === "on";
 
   if (!difficulty || !experience || count === null) {
@@ -87,9 +90,9 @@ export default async function SkillSelectionPage({
           {ctxResult.context.jobTitleName}
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Choose the skills you want prioritised. Your {count} questions will be split evenly
-          across the final skill set — selected skills first, then skills from the job
-          description you pick next, then the job title&apos;s configured skills.
+          {isCoding
+            ? `Choose the skills you want prioritised. Your ${count} coding challenge${count === 1 ? "" : "s"} will favour challenges tagged with these skills, then skills from the job description you pick next, then the job title's configured skills.`
+            : `Choose the skills you want prioritised. Your ${count} questions will be split evenly across the final skill set — selected skills first, then skills from the job description you pick next, then the job title's configured skills.`}
         </p>
 
         {skills.length === 0 ? (

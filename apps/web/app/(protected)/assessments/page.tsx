@@ -90,7 +90,7 @@ export default async function AssessmentsPage() {
                                     : f === "BASIC_SKILLS_MCQ"
                                       ? "Basic + Skills"
                                       : f === "CODING"
-                                        ? "Coding (soon)"
+                                        ? "Coding"
                                         : f,
                                 )
                                 .join(", ")

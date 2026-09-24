@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPrisma } from "@/lib/prisma";
 import { EmptyState } from "@/components/ui/card";
-import { FlowBadge, SoonBadge } from "@/components/ui/badges";
+import { FlowBadge } from "@/components/ui/badges";
 import { IconArrowRight, IconMedal } from "@/components/ui/icons";
 
 export const dynamic = "force-dynamic";
@@ -11,8 +11,9 @@ export const metadata = { title: "Job Titles · Assessment AI" };
 
 /**
  * Job Title selection for a LIVE ROLE_BASED area. Titles come exclusively
- * from the database; flows the product has not implemented yet (CODING) are
- * presented as clearly-disabled "Soon" cards — no dead links, no fakes.
+ * from the database; every LIVE title links to its flow (all four flows are
+ * implemented). Unknown future flows fall back to a coming-soon card in the
+ * setup step — no dead links, no fakes.
  */
 export default async function JobTitlesPage({
   params,
@@ -41,15 +42,11 @@ export default async function JobTitlesPage({
   } | null;
   if (!area) notFound();
 
-  const cardBody = (t: { name: string; assessmentFlow: string }, soon: boolean) => (
+  const cardBody = (t: { name: string; assessmentFlow: string }) => (
     <>
       <div className="flex items-start justify-between gap-3">
         <p className="font-bold text-slate-900">{t.name}</p>
-        {soon ? (
-          <SoonBadge />
-        ) : (
-          <IconArrowRight className="h-4 w-4 shrink-0 text-blue-600 transition-transform duration-200 motion-safe:group-hover:translate-x-1" />
-        )}
+        <IconArrowRight className="h-4 w-4 shrink-0 text-blue-600 transition-transform duration-200 motion-safe:group-hover:translate-x-1" />
       </div>
       <div className="mt-3">
         <FlowBadge flow={t.assessmentFlow} />
@@ -82,27 +79,15 @@ export default async function JobTitlesPage({
         />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {area.jobTitles.map((t) => {
-            const soon = t.assessmentFlow === "CODING";
-            const className =
-              "group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-300 " +
-              (soon
-                ? "opacity-70"
-                : "motion-safe:hover:-translate-y-1 motion-safe:hover:shadow-lg");
-            return soon ? (
-              <div key={t.id} className={className} aria-disabled="true">
-                {cardBody(t, true)}
-              </div>
-            ) : (
-              <Link
-                key={t.id}
-                href={`/assessments/${area.id}/job-titles/${t.id}`}
-                className={className}
-              >
-                {cardBody(t, false)}
-              </Link>
-            );
-          })}
+          {area.jobTitles.map((t) => (
+            <Link
+              key={t.id}
+              href={`/assessments/${area.id}/job-titles/${t.id}`}
+              className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-300 motion-safe:hover:-translate-y-1 motion-safe:hover:shadow-lg"
+            >
+              {cardBody(t)}
+            </Link>
+          ))}
         </div>
       )}
     </div>

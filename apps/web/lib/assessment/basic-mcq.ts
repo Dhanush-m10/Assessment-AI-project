@@ -24,6 +24,7 @@ export function parseExperience(value: string): ExperienceBandValue | null {
 }
 
 export { PASTED_JD_MAX_CHARS } from "@/lib/assessment/jd-limits";
+import { CODING_COUNT_MAX, CODING_COUNT_MIN } from "@/lib/assessment/limits";
 import { PASTED_JD_MAX_CHARS } from "@/lib/assessment/jd-limits";
 
 export type BasicContext = {
@@ -233,7 +234,8 @@ export type CreateRoleResult =
   | { ok: true; assessmentId: string; status: "PREVIEW" | "IN_PROGRESS" }
   | { ok: false; reason: "insufficient"; available: number }
   | { ok: false; reason: "invalid-area" | "invalid-job-title" | "unsupported-flow" }
-  | { ok: false; reason: "invalid-jd"; message: string };
+  | { ok: false; reason: "invalid-jd"; message: string }
+  | { ok: false; reason: "invalid-config"; message: string };
 
 /**
  * Role-based creation for BASIC_MCQ and BASIC_SKILLS_MCQ. The flow comes from
@@ -260,8 +262,21 @@ export async function createRoleAssessment(args: {
   const ctxResult = await validateRoleContext(args.areaId, args.jobTitleId);
   if (!ctxResult.ok) return { ok: false, reason: ctxResult.reason };
   const ctx = ctxResult.context;
-  if (ctx.assessmentFlow !== "BASIC_MCQ" && ctx.assessmentFlow !== "BASIC_SKILLS_MCQ") {
+  if (
+    ctx.assessmentFlow !== "BASIC_MCQ" &&
+    ctx.assessmentFlow !== "BASIC_SKILLS_MCQ" &&
+    ctx.assessmentFlow !== "CODING"
+  ) {
     return { ok: false, reason: "unsupported-flow" };
+  }
+  const isCoding = ctx.assessmentFlow === "CODING";
+  // D-LIMITS: coding mode is bounded to 1-10 challenges.
+  if (isCoding && (args.count < CODING_COUNT_MIN || args.count > CODING_COUNT_MAX)) {
+    return {
+      ok: false,
+      reason: "invalid-config",
+      message: `Coding assessments contain between ${CODING_COUNT_MIN} and ${CODING_COUNT_MAX} challenges.`,
+    };
   }
 
   let jdPayload: { jdId: string | null; jdSource: "LIBRARY" | "USER_PASTED"; content: string };
@@ -304,8 +319,10 @@ export async function createRoleAssessment(args: {
   const isSkillsFlow = ctx.assessmentFlow === "BASIC_SKILLS_MCQ";
   let quotaSkills: string[] | undefined;
   let skillSources: Record<string, ("USER_SELECTED" | "JD" | "JOB_TITLE")[]> | undefined;
+  let skillProvenance: { skillId: string; sources: ("USER_SELECTED" | "JD" | "JOB_TITLE")[] }[] | undefined;
+  let codingPreferredSkillIds: string[] | undefined;
 
-  if (isSkillsFlow) {
+  if (isSkillsFlow || isCoding) {
     const titleSkills = (await listTitleSkills(ctx.jobTitleId)).map((sk) => sk.id);
     const allowed = new Set([...titleSkills, ...jdSkillIds]);
     // Client-selected ids are untrusted: intersect with DB-owned skill sets.
@@ -316,12 +333,27 @@ export async function createRoleAssessment(args: {
       ...titleSkills.filter((id) => !userSelected.includes(id) && !jdSkillIds.includes(id)),
     ];
     if (ordered.length === 0) {
-      return {
-        ok: false,
-        reason: "invalid-jd",
-        message: "This job title has no skills configured yet, so a skills-based assessment cannot be built.",
-      };
+      // Coding still works without skills (the library is searched by job
+      // title tags too); only the skills-based MCQ flow requires them.
+      if (!isCoding) {
+        return {
+          ok: false,
+          reason: "invalid-jd",
+          message: "This job title has no skills configured yet, so a skills-based assessment cannot be built.",
+        };
+      }
     }
+    if (isCoding) {
+      // Priority ordering only (spec §22) — no per-skill quotas for coding.
+      codingPreferredSkillIds = ordered;
+      skillProvenance = ordered.map((id) => {
+        const sources: ("USER_SELECTED" | "JD" | "JOB_TITLE")[] = [];
+        if (userSelected.includes(id)) sources.push("USER_SELECTED");
+        if (jdSkillIds.includes(id)) sources.push("JD");
+        if (titleSkills.includes(id)) sources.push("JOB_TITLE");
+        return { skillId: id, sources };
+      });
+    } else {
     quotaSkills = ordered;
     skillSources = {};
     for (const id of ordered) {
@@ -331,12 +363,13 @@ export async function createRoleAssessment(args: {
       if (titleSkills.includes(id)) sources.push("JOB_TITLE");
       skillSources[id] = sources;
     }
+    }
   }
 
   const result = await createAssessment({
     userId: args.userId,
     clientRequestId: args.clientRequestId,
-    flow: isSkillsFlow ? "BASIC_SKILLS_MCQ" : "BASIC_MCQ",
+    flow: isCoding ? "CODING" : isSkillsFlow ? "BASIC_SKILLS_MCQ" : "BASIC_MCQ",
     categoryId: ctx.categoryId,
     areaId: ctx.areaId,
     jobTitleId: ctx.jobTitleId,
@@ -347,13 +380,14 @@ export async function createRoleAssessment(args: {
     jd: jdPayload,
     selection: {
       userId: args.userId,
-      flow: isSkillsFlow ? "BASIC_SKILLS_MCQ" : "BASIC_MCQ",
+      flow: isCoding ? "CODING" : isSkillsFlow ? "BASIC_SKILLS_MCQ" : "BASIC_MCQ",
       difficulty: args.difficulty,
       jobTitleId: ctx.jobTitleId,
-      preferredSkillIds: jdSkillIds,
+      preferredSkillIds: isCoding ? codingPreferredSkillIds : jdSkillIds,
     },
     quotaSkills,
     skillSources,
+    skillProvenance,
   });
   return result;
 }

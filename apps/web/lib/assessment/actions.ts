@@ -16,6 +16,14 @@ import {
   type JdChoice,
 } from "@/lib/assessment/basic-mcq";
 import { replaceQuestion, startFromPreview } from "@/lib/assessment/engine";
+import {
+  runCodingCode,
+  submitCodingAssessment,
+  submitCodingQuestion,
+  type RunCodeResult,
+  type SubmitCodeResult,
+} from "@/lib/assessment/coding";
+import { getPrisma } from "@/lib/prisma";
 
 /**
  * Assessment Server Actions (GENERAL + BASIC_MCQ). Identity always comes from
@@ -120,7 +128,7 @@ export async function startBasicMcqAssessment(
     if (result.reason === "insufficient") {
       return { error: INSUFFICIENT_MSG, available: result.available };
     }
-    if (result.reason === "invalid-jd") {
+    if (result.reason === "invalid-jd" || result.reason === "invalid-config") {
       return { error: result.message };
     }
     if (result.reason === "unsupported-flow") {
@@ -151,7 +159,16 @@ export async function submitAssessmentAction(
   assessmentId: string,
 ): Promise<{ ok: boolean; error?: string; missing?: number; redirect?: string }> {
   const user = await requireUser();
-  const result = await submitMcqAssessment(user.id, assessmentId);
+  // Flow-aware dispatch: coding assessments aggregate server-executed
+  // attempts; MCQ flows keep the existing snapshot re-scoring path.
+  const assessment = (await getPrisma().assessment.findFirst({
+    where: { id: assessmentId, userId: user.id },
+    select: { flow: true },
+  })) as { flow: string } | null;
+  const result =
+    assessment?.flow === "CODING"
+      ? await submitCodingAssessment(user.id, assessmentId)
+      : await submitMcqAssessment(user.id, assessmentId);
   if (result.ok) return { ok: true, redirect: `/results/${result.assessmentId}` };
   if (result.reason === "already-completed") {
     return { ok: true, redirect: `/results/${result.assessmentId}` };
@@ -187,4 +204,30 @@ export async function startFromPreviewAction(
   const result = await startFromPreview(user.id, assessmentId);
   if (!result.ok) return { ok: false };
   return { ok: true, redirect: result.redirect };
+}
+
+/**
+ * Run Code (CODING): executes the candidate's code against PUBLIC sample
+ * tests only. Identity/ownership/question-kind are validated server-side;
+ * the browser sends code and nothing else.
+ */
+export async function runCodeAction(
+  assessmentQuestionId: string,
+  code: string,
+): Promise<RunCodeResult> {
+  const user = await requireUser();
+  return runCodingCode(user.id, assessmentQuestionId, code);
+}
+
+/**
+ * Submit Code (per coding question): server executes ALL tests (public +
+ * hidden), decides pass/fail (D-CODE all-or-nothing) and persists the
+ * attempt. The client never reports results.
+ */
+export async function submitCodeAction(
+  assessmentQuestionId: string,
+  code: string,
+): Promise<SubmitCodeResult> {
+  const user = await requireUser();
+  return submitCodingQuestion(user.id, assessmentQuestionId, code);
 }

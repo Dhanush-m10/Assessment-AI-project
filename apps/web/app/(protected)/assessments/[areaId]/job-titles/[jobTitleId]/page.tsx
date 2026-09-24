@@ -4,6 +4,7 @@ import { validateRoleContext } from "@/lib/assessment/basic-mcq";
 import { Card, EmptyState } from "@/components/ui/card";
 import { SetupForm } from "@/components/assessment/setup-form";
 import { StepIndicator } from "@/components/ui/step-indicator";
+import { CODING_COUNT_MAX } from "@/lib/assessment/limits";
 import { IconArrowRight } from "@/components/ui/icons";
 
 export const dynamic = "force-dynamic";
@@ -26,9 +27,13 @@ export default async function JobTitleSetupPage({
 
   if (!result.ok) notFound();
   const { assessmentFlow } = result.context;
-  const implemented = assessmentFlow === "BASIC_MCQ" || assessmentFlow === "BASIC_SKILLS_MCQ";
+  const implemented =
+    assessmentFlow === "BASIC_MCQ" ||
+    assessmentFlow === "BASIC_SKILLS_MCQ" ||
+    assessmentFlow === "CODING";
+  const isCoding = assessmentFlow === "CODING";
   const steps =
-    assessmentFlow === "BASIC_SKILLS_MCQ"
+    assessmentFlow === "BASIC_SKILLS_MCQ" || isCoding
       ? ["Job title", "Setup", "Skills", "Job description", "Preview"]
       : ["Job title", "Setup", "Job description", "Preview"];
 
@@ -49,17 +54,21 @@ export default async function JobTitleSetupPage({
               {result.context.jobTitleName}
             </h1>
             <p className="mt-2 text-sm text-slate-500">
-              {assessmentFlow === "BASIC_SKILLS_MCQ"
-                ? "Configure your Basic + Skills assessment. Questions are allocated round-robin across the skills you confirm in the next step."
-                : "Configure your Basic MCQ assessment. Questions are selected from the live library for this job title at your chosen difficulty and experience band."}
+              {isCoding
+                ? "Configure your coding assessment. Challenges are selected from the live coding library for this job title; you will write, run and submit real code against them."
+                : assessmentFlow === "BASIC_SKILLS_MCQ"
+                  ? "Configure your Basic + Skills assessment. Questions are allocated round-robin across the skills you confirm in the next step."
+                  : "Configure your Basic MCQ assessment. Questions are selected from the live library for this job title at your chosen difficulty and experience band."}
             </p>
             <div className="mt-6">
               <SetupForm
                 showExperience
+                maxCount={isCoding ? CODING_COUNT_MAX : undefined}
+                countNoun={isCoding ? "challenges" : "questions"}
                 hrefFor={(p) => {
                   const base = `/assessments/${areaId}/job-titles/${jobTitleId}`;
                   const query = `difficulty=${p.difficulty}&experience=${p.experience}&count=${p.count}&preview=${p.preview ? "on" : "off"}`;
-                  return assessmentFlow === "BASIC_SKILLS_MCQ"
+                  return assessmentFlow === "BASIC_SKILLS_MCQ" || isCoding
                     ? `${base}/skills?${query}`
                     : `${base}/jd?${query}`;
                 }}
@@ -74,7 +83,7 @@ export default async function JobTitleSetupPage({
             <EmptyState
               className="mt-4"
               title="Coming soon"
-              message="This job title runs a flow that is not available in the prototype yet (e.g. coding assessments). Basic MCQ and Basic + Skills job titles are available now."
+              message="This job title runs a flow that is not available in the prototype yet. General, Basic MCQ, Basic + Skills and Coding job titles are available now."
               action={
                 <Link
                   href={`/assessments/${areaId}/job-titles`}

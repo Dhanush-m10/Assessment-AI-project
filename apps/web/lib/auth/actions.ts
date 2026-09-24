@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -77,6 +78,36 @@ export async function signInAction(
     return { error: "Invalid email or password." };
   }
   redirect("/dashboard");
+}
+
+/**
+ * Google Sign-In through Supabase Auth OAuth (no custom token validation,
+ * no second user system): GoTrue hosts the whole flow and redirects back to
+ * the existing PKCE callback (/auth/callback), which exchanges the code for
+ * the same session used everywhere else.
+ *
+ * Required provider configuration (documented, not invented here):
+ * - Google Cloud Console: OAuth client (Web application) with authorized
+ *   redirect URI https://<project-ref>.supabase.co/auth/v1/callback
+ * - Supabase Dashboard -> Authentication -> Providers -> Google: enable and
+ *   paste that client ID/secret
+ * - Supabase Dashboard -> Authentication -> URL Configuration: this app's
+ *   origin + /auth/callback must be an allowed Redirect URL
+ */
+export async function signInWithGoogleAction(): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const origin = (await headers()).get("origin") ?? "";
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: origin ? `${origin}/auth/callback?next=/dashboard` : undefined,
+      queryParams: { access_type: "offline", prompt: "consent" },
+    },
+  });
+  if (error || !data.url) {
+    redirect("/login?error=oauth");
+  }
+  redirect(data.url);
 }
 
 export async function signOutAction(): Promise<void> {

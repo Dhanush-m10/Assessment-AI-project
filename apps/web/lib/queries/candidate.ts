@@ -1,3 +1,4 @@
+import { isCodingSnapshot, parseCodingSnapshot } from "@/lib/assessment/snapshot";
 import { getPrisma } from "@/lib/prisma";
 
 /**
@@ -376,6 +377,15 @@ export type AssessmentResult = {
   perSkill: { name: string; correct: number; total: number }[];
   correct: number;
   total: number;
+  /** CODING only: per-challenge execution summary (safe fields; hidden test
+   *  contents are never included — aggregate counts only). */
+  codingQuestions: {
+    sequence: number;
+    title: string;
+    isCorrect: boolean;
+    passedTestCount: number | null;
+    totalTestCount: number | null;
+  }[];
 };
 
 /**
@@ -443,6 +453,34 @@ export async function getAssessmentResult(
     })) as SkillRef[]).map((s) => [s.id, s.name] as const),
   );
 
+  let codingQuestions: AssessmentResult["codingQuestions"] = [];
+  if (assessment.flow === "CODING" && assessment.status === "COMPLETED") {
+    const rows = (await db.userAnswer.findMany({
+      where: { userId, assessmentQuestion: { assessmentId } },
+      select: {
+        isCorrect: true,
+        passedTestCount: true,
+        totalTestCount: true,
+        assessmentQuestion: { select: { sequence: true, questionSnapshot: true } },
+      },
+      orderBy: { assessmentQuestion: { sequence: "asc" } },
+    })) as {
+      isCorrect: boolean;
+      passedTestCount: number | null;
+      totalTestCount: number | null;
+      assessmentQuestion: { sequence: number; questionSnapshot: unknown };
+    }[];
+    codingQuestions = rows.map((r) => ({
+      sequence: r.assessmentQuestion.sequence,
+      title: isCodingSnapshot(r.assessmentQuestion.questionSnapshot)
+        ? parseCodingSnapshot(r.assessmentQuestion.questionSnapshot).title
+        : "Coding challenge",
+      isCorrect: r.isCorrect,
+      passedTestCount: r.passedTestCount,
+      totalTestCount: r.totalTestCount,
+    }));
+  }
+
   return {
     id: assessment.id,
     areaName: assessment.areaOfInterest.name,
@@ -464,5 +502,6 @@ export async function getAssessmentResult(
     })),
     correct: answers.filter((a) => a.isCorrect).length,
     total: answers.length,
+    codingQuestions,
   };
 }

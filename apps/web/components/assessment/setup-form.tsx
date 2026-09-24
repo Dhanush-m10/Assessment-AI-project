@@ -18,6 +18,8 @@ import { EXPERIENCE_META } from "@/components/assessment/experience-meta";
 export function SetupForm({
   hrefFor,
   showExperience,
+  maxCount = GENERAL_COUNT_MAX,
+  countNoun = "questions",
 }: {
   hrefFor: (p: {
     difficulty: string;
@@ -26,17 +28,20 @@ export function SetupForm({
     preview: boolean;
   }) => string;
   showExperience: boolean;
+  /** D-LIMITS: 1-50 for MCQ flows, 1-10 for CODING. */
+  maxCount?: number;
+  countNoun?: string;
 }) {
   const router = useRouter();
   const [difficulty, setDifficulty] = useState("EASY");
   const [experience, setExperience] = useState("Y0_2");
-  const [count, setCount] = useState(10);
+  const [count, setCount] = useState(Math.min(10, maxCount));
   const [preview, setPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const go = () => {
-    if (!Number.isInteger(count) || count < GENERAL_COUNT_MIN || count > GENERAL_COUNT_MAX) {
-      setError(`Question count must be between ${GENERAL_COUNT_MIN} and ${GENERAL_COUNT_MAX}.`);
+    if (!Number.isInteger(count) || count < GENERAL_COUNT_MIN || count > maxCount) {
+      setError(`${countNoun === "questions" ? "Question" : "Challenge"} count must be between ${GENERAL_COUNT_MIN} and ${maxCount}.`);
       return;
     }
     setError(null);
@@ -102,20 +107,20 @@ export function SetupForm({
 
       <div>
         <label htmlFor="count" className="text-sm font-semibold text-slate-800">
-          Number of questions
+          Number of {countNoun}
         </label>
         <div className="mt-2 flex items-center gap-3">
           <input
             id="count"
             type="number"
             min={GENERAL_COUNT_MIN}
-            max={GENERAL_COUNT_MAX}
+            max={maxCount}
             value={count}
             onChange={(e) => setCount(Number(e.target.value))}
             className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
           />
           <span className="text-sm text-slate-500">
-            between {GENERAL_COUNT_MIN} and {GENERAL_COUNT_MAX}
+            between {GENERAL_COUNT_MIN} and {maxCount}
           </span>
         </div>
       </div>

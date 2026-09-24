@@ -135,5 +135,5 @@ machine or a network-permitted CI).
 | `OPENAI_API_KEY` | Phase 6 | Server-only (ai-service) |
 | `AI_SERVICE_URL` | Phase 6 | Server-only (apps/web) |
 | `AI_SERVICE_SHARED_SECRET` | Phase 6 | Server-only, both sides |
-| `JUDGE0_BASE_URL` | Phase 10 | Server-only (apps/web) |
-| `JUDGE0_API_KEY` | Phase 10 | Server-only (apps/web) |
+| `JUDGE0_BASE_URL` | Phase 7 (pulled forward from Phase 10) | Server-only (apps/web) |
+| `JUDGE0_API_KEY` | Phase 7 (pulled forward from Phase 10) | Server-only (apps/web) |

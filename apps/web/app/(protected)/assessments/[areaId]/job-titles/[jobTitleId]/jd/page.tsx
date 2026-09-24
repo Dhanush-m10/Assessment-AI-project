@@ -7,6 +7,7 @@ import {
   validateRoleContext,
 } from "@/lib/assessment/basic-mcq";
 import { parseCount, parseDifficulty } from "@/lib/assessment/general";
+import { parseCodingCount } from "@/lib/assessment/limits";
 import { getPrisma } from "@/lib/prisma";
 import { Card, EmptyState } from "@/components/ui/card";
 import { SkillChip } from "@/components/ui/badges";
@@ -47,18 +48,22 @@ export default async function JdPage({
 
   const difficulty = parseDifficulty(sp.difficulty ?? "");
   const experience = parseExperience(sp.experience ?? "");
-  const count = parseCount(sp.count ?? "");
   const preview = sp.preview === "on";
 
   const ctxResult = await validateRoleContext(areaId, jobTitleId);
   if (!ctxResult.ok) notFound();
   if (
     ctxResult.context.assessmentFlow !== "BASIC_MCQ" &&
-    ctxResult.context.assessmentFlow !== "BASIC_SKILLS_MCQ"
+    ctxResult.context.assessmentFlow !== "BASIC_SKILLS_MCQ" &&
+    ctxResult.context.assessmentFlow !== "CODING"
   ) {
     notFound();
   }
-  const skillsFlow = ctxResult.context.assessmentFlow === "BASIC_SKILLS_MCQ";
+  const isCoding = ctxResult.context.assessmentFlow === "CODING";
+  // CODING follows the same skills -> JD chain as BASIC_SKILLS_MCQ.
+  const skillsFlow =
+    ctxResult.context.assessmentFlow === "BASIC_SKILLS_MCQ" || isCoding;
+  const count = isCoding ? parseCodingCount(sp.count ?? "") : parseCount(sp.count ?? "");
 
   const setupHref = `/assessments/${areaId}/job-titles/${jobTitleId}`;
   const configQuery = `difficulty=${sp.difficulty ?? ""}&experience=${sp.experience ?? ""}&count=${sp.count ?? ""}&preview=${preview ? "on" : "off"}`;
@@ -129,7 +134,9 @@ export default async function JdPage({
           {ctxResult.context.jobTitleName}
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Finalize the job description your assessment is based on.
+          {isCoding
+            ? "Finalize the job description your coding assessment is based on. Its skills prioritise which challenges are selected."
+            : "Finalize the job description your assessment is based on."}
         </p>
 
         <dl className="mt-5 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm sm:grid-cols-4">
@@ -144,7 +151,7 @@ export default async function JdPage({
             <dd className="font-bold text-slate-900">{experienceLabel}</dd>
           </div>
           <div>
-            <dt className="text-slate-500">Questions</dt>
+            <dt className="text-slate-500">{isCoding ? "Challenges" : "Questions"}</dt>
             <dd className="font-bold text-slate-900">{count}</dd>
           </div>
           <div>
@@ -156,8 +163,9 @@ export default async function JdPage({
         {selectedSkills.length > 0 && (
           <div className="mt-4">
             <p className="text-sm text-slate-500">
-              Prioritised skills — questions are split evenly across your final skill set
-              (selected first, then job-description and job-title skills):
+              {isCoding
+                ? "Prioritised skills — challenges tagged with these skills are selected first (then job-description and job-title skills):"
+                : "Prioritised skills — questions are split evenly across your final skill set (selected first, then job-description and job-title skills):"}
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               {selectedSkills.map((s) => (

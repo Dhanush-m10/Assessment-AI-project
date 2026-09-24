@@ -98,9 +98,47 @@ export default async function ResultDetailPage({
                 ))}
               </ul>
             )}
-            <p className="mt-6 rounded-lg bg-blue-50 px-4 py-3 text-sm text-slate-700">
-              The full question-by-question breakdown arrives with the scoring phase.
-            </p>
+            {result.flow === "CODING" && result.codingQuestions.length > 0 ? (
+              <div className="mt-6">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Challenge results
+                </p>
+                <ul className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200">
+                  {result.codingQuestions.map((q) => (
+                    <li key={q.sequence} className="flex items-center justify-between gap-3 px-4 py-3">
+                      <span className="text-sm font-semibold text-slate-800">
+                        <span className="mr-2 text-slate-400">{q.sequence}.</span>
+                        {q.title}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        {q.passedTestCount !== null && q.totalTestCount !== null && (
+                          <span className="text-xs text-slate-500">
+                            {q.passedTestCount}/{q.totalTestCount} tests
+                          </span>
+                        )}
+                        <span
+                          className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ring-1 ${
+                            q.isCorrect
+                              ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                              : "bg-rose-50 text-rose-700 ring-rose-200"
+                          }`}
+                        >
+                          {q.isCorrect ? "Passed" : "Failed"}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 text-xs text-slate-400">
+                  A challenge passes only when every hidden test passes. Test counts are
+                  aggregate only — hidden test contents are never shown.
+                </p>
+              </div>
+            ) : (
+              <p className="mt-6 rounded-lg bg-blue-50 px-4 py-3 text-sm text-slate-700">
+                The full question-by-question breakdown arrives with the scoring phase.
+              </p>
+            )}
           </>
         ) : (
           <EmptyState

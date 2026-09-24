@@ -1,6 +1,15 @@
 import type { PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { buildSnapshot, parseSnapshot, type QuestionSnapshot } from "@/lib/assessment/snapshot";
+import {
+  buildCodingSnapshot,
+  buildSnapshot,
+  isCodingSnapshot,
+  parseCodingSnapshot,
+  parseSnapshot,
+  toCodingClientView,
+  type ClientCodingQuestion,
+  type QuestionSnapshot,
+} from "@/lib/assessment/snapshot";
 import type { DifficultyValue } from "@/lib/assessment/limits";
 
 /**
@@ -28,7 +37,7 @@ import type { DifficultyValue } from "@/lib/assessment/limits";
 
 export type SelectionContext = {
   userId: string;
-  flow: "GENERAL" | "BASIC_MCQ" | "BASIC_SKILLS_MCQ";
+  flow: "GENERAL" | "BASIC_MCQ" | "BASIC_SKILLS_MCQ" | "CODING";
   difficulty: DifficultyValue;
   areaId?: string;
   jobTitleId?: string;
@@ -105,6 +114,92 @@ export async function selectEligibleQuestions(
   });
 }
 
+export type CodingSelectionContext = {
+  userId: string;
+  difficulty: DifficultyValue;
+  jobTitleId: string;
+  /** Priority ordering only (spec §22: selected skills, JD skills and job
+   *  title tags all boost relevance) — coding has no per-skill quotas in V1. */
+  preferredSkillIds?: string[];
+  excludeQuestionIds?: string[];
+  forReplacement?: boolean;
+};
+
+export type EligibleCodingQuestion = {
+  id: string;
+  title: string;
+  problemStatement: string;
+  language: string;
+  starterCode: string | null;
+  constraints: string | null;
+  skillIds: string[];
+  testCases: { id: string; input: string; expectedOutput: string; visibility: string }[];
+};
+
+/**
+ * CODING selection over the CodingQuestion library: LIVE + difficulty + job
+ * title tag (CodingQuestionJobTitle), D-30DAY hard exclusion through
+ * UserQuestionHistory.codingQuestionId, deterministic id-asc order with the
+ * same preferred-skill boost tiering as the MCQ selector.
+ */
+export async function selectEligibleCodingQuestions(
+  ctx: CodingSelectionContext,
+): Promise<EligibleCodingQuestion[]> {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const rows = (await getPrisma().codingQuestion.findMany({
+    where: {
+      status: "LIVE",
+      difficulty: ctx.difficulty,
+      jobTitles: { some: { jobTitleId: ctx.jobTitleId } },
+      ...(ctx.excludeQuestionIds?.length ? { id: { notIn: ctx.excludeQuestionIds } } : {}),
+      NOT: {
+        history: { some: { userId: ctx.userId, lastCorrectAt: { gte: thirtyDaysAgo } } },
+      },
+      ...(ctx.forReplacement
+        ? {
+            NOT: {
+              history: { some: { userId: ctx.userId, lastCorrectAt: { not: null } } },
+            },
+          }
+        : {}),
+    },
+    orderBy: { id: "asc" },
+    select: {
+      id: true,
+      title: true,
+      problemStatement: true,
+      language: true,
+      starterCode: true,
+      constraints: true,
+      skills: { select: { skillId: true } },
+      testCases: {
+        select: { id: true, input: true, expectedOutput: true, visibility: true },
+      },
+    },
+  })) as (Omit<EligibleCodingQuestion, "skillIds"> & {
+    skills: { skillId: string }[];
+  })[];
+
+  const shaped = rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    problemStatement: r.problemStatement,
+    language: r.language,
+    starterCode: r.starterCode,
+    constraints: r.constraints,
+    testCases: r.testCases,
+    skillIds: r.skills.map((sk) => sk.skillId),
+  }));
+
+  const preferred = new Set(ctx.preferredSkillIds ?? []);
+  if (preferred.size === 0) return shaped;
+  return shaped.sort((a, b) => {
+    const at = a.skillIds.some((sk) => preferred.has(sk)) ? 0 : 1;
+    const bt = b.skillIds.some((sk) => preferred.has(sk)) ? 0 : 1;
+    return at - bt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  });
+}
+
 export type QuotaSelection = {
   selected: (EligibleQuestion & { quotaSkillId: string })[];
   available: number;
@@ -152,7 +247,7 @@ export async function selectWithQuotas(
 export type AssessmentDraft = {
   userId: string;
   clientRequestId: string;
-  flow: "GENERAL" | "BASIC_MCQ" | "BASIC_SKILLS_MCQ";
+  flow: "GENERAL" | "BASIC_MCQ" | "BASIC_SKILLS_MCQ" | "CODING";
   categoryId: string;
   areaId: string;
   jobTitleId: string | null;
@@ -166,6 +261,8 @@ export type AssessmentDraft = {
   quotaSkills?: string[];
   /** Sources per final skill for AssessmentSkill rows (D-DIST tiers). */
   skillSources?: Record<string, ("USER_SELECTED" | "JD" | "JOB_TITLE")[]>;
+  /** CODING: skill provenance rows without quotas (priority ordering only). */
+  skillProvenance?: { skillId: string; sources: ("USER_SELECTED" | "JD" | "JOB_TITLE")[] }[];
 };
 
 export type CreateResult =
@@ -202,7 +299,20 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
   if (!area) return { ok: false, reason: "invalid-area" };
 
   let selected: (EligibleQuestion & { quotaSkillId: string | null })[];
-  if (args.quotaSkills?.length) {
+  let codingSelected: EligibleCodingQuestion[] = [];
+  if (args.flow === "CODING") {
+    codingSelected = await selectEligibleCodingQuestions({
+      userId: args.selection.userId,
+      difficulty: args.selection.difficulty,
+      jobTitleId: args.selection.jobTitleId ?? "",
+      preferredSkillIds: args.selection.preferredSkillIds,
+    });
+    if (codingSelected.length < args.count) {
+      return { ok: false, reason: "insufficient", available: codingSelected.length };
+    }
+    codingSelected = codingSelected.slice(0, args.count);
+    selected = [];
+  } else if (args.quotaSkills?.length) {
     const quota = await selectWithQuotas(
       {
         userId: args.selection.userId,
@@ -232,7 +342,9 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
       data: {
         userId: args.userId,
         flow: args.flow,
-        mode: null,
+        // C3: AssessmentMode distinguishes flow 4's MCQ/CODING shape; flows
+        // 1-3 keep null.
+        mode: args.flow === "CODING" ? "CODING" : null,
         categoryId: args.categoryId,
         areaOfInterestId: area.id,
         jobTitleId: args.jobTitleId,
@@ -250,19 +362,32 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
       select: { id: true },
     });
     await tx.assessmentQuestion.createMany({
-      data: selected.map((q, i) => ({
-        assessmentId: assessment.id,
-        sequence: i + 1,
-        source: "QUESTION_LIBRARY",
-        libraryQuestionId: q.id,
-        codingQuestionId: null,
-        // A4: single primary skill = the quota this question filled.
-        skillId: q.quotaSkillId,
-        questionSnapshot: buildSnapshot({
-          questionText: q.questionText,
-          options: q.options,
-        }) as unknown as Record<string, unknown>,
-      })),
+      data:
+        args.flow === "CODING"
+          ? codingSelected.map((q, i) => ({
+              assessmentId: assessment.id,
+              sequence: i + 1,
+              source: "CODING_LIBRARY" as const,
+              libraryQuestionId: null,
+              codingQuestionId: q.id,
+              // Coding V1 has no per-skill quotas (A4 attribution is a
+              // quota concept); priority skills live in AssessmentSkill.
+              skillId: null,
+              questionSnapshot: buildCodingSnapshot(q) as unknown as Record<string, unknown>,
+            }))
+          : selected.map((q, i) => ({
+              assessmentId: assessment.id,
+              sequence: i + 1,
+              source: "QUESTION_LIBRARY" as const,
+              libraryQuestionId: q.id,
+              codingQuestionId: null,
+              // A4: single primary skill = the quota this question filled.
+              skillId: q.quotaSkillId,
+              questionSnapshot: buildSnapshot({
+                questionText: q.questionText,
+                options: q.options,
+              }) as unknown as Record<string, unknown>,
+            })),
     });
     if (args.quotaSkills?.length) {
       await tx.assessmentSkill.createMany({
@@ -270,6 +395,14 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
           assessmentId: assessment.id,
           skillId,
           sources: args.skillSources?.[skillId] ?? ["JOB_TITLE"],
+        })),
+      });
+    } else if (args.skillProvenance?.length) {
+      await tx.assessmentSkill.createMany({
+        data: args.skillProvenance.map((row) => ({
+          assessmentId: assessment.id,
+          skillId: row.skillId,
+          sources: row.sources,
         })),
       });
     }
@@ -308,7 +441,9 @@ export async function replaceQuestion(
           areaOfInterestId: true,
           jobTitleId: true,
           jdId: true,
-          questions: { select: { id: true, libraryQuestionId: true } },
+          questions: {
+            select: { id: true, libraryQuestionId: true, codingQuestionId: true },
+          },
         },
       },
     },
@@ -323,11 +458,57 @@ export async function replaceQuestion(
       areaOfInterestId: string;
       jobTitleId: string | null;
       jdId: string | null;
-      questions: { id: string; libraryQuestionId: string | null }[];
+      questions: {
+        id: string;
+        libraryQuestionId: string | null;
+        codingQuestionId: string | null;
+      }[];
     };
   } | null;
   if (!target) return { ok: false, reason: "not-found" };
   const assessment = target.assessment;
+
+  // CODING branch: replace from the coding library (never swaps kinds).
+  if (assessment.flow === "CODING" && assessment.jobTitleId) {
+    const codingCandidates = await selectEligibleCodingQuestions({
+      userId,
+      difficulty: assessment.difficulty,
+      jobTitleId: assessment.jobTitleId,
+      preferredSkillIds: assessment.jdId
+        ? ((await db.jobDescriptionSkill.findMany({
+            where: { jobDescriptionId: assessment.jdId },
+            select: { skillId: true },
+          })) as { skillId: string }[]).map((r) => r.skillId)
+        : [],
+      forReplacement: true,
+      excludeQuestionIds: assessment.questions
+        .map((q) => q.codingQuestionId)
+        .filter((v): v is string => Boolean(v)),
+    });
+    const nextCoding = codingCandidates[0];
+    if (!nextCoding) return { ok: false, reason: "ai-required" };
+
+    await db.$transaction(async (tx: PrismaClient) => {
+      await tx.assessmentQuestion.delete({ where: { id: target.id } });
+      await tx.assessmentQuestion.create({
+        data: {
+          assessmentId: assessment.id,
+          sequence: target.sequence,
+          source: "CODING_LIBRARY",
+          libraryQuestionId: null,
+          codingQuestionId: nextCoding.id,
+          skillId: null,
+          replacedFromId: target.id,
+          questionSnapshot: buildCodingSnapshot(nextCoding) as unknown as Record<
+            string,
+            unknown
+          >,
+        },
+      });
+    });
+    return { ok: true };
+  }
+  if (assessment.flow === "CODING") return { ok: false, reason: "ai-required" };
 
   const preferredSkillIds = assessment.jdId
     ? ((await db.jobDescriptionSkill.findMany({
@@ -380,15 +561,26 @@ export async function replaceQuestion(
   return { ok: true };
 }
 
+export type PreviewMcqQuestion = {
+  kind: "MCQ";
+  id: string;
+  sequence: number;
+  text: string;
+  options: { id: string; text: string }[];
+};
+
+export type PreviewCodingQuestion = ClientCodingQuestion;
+
 export type PreviewData = {
   assessmentId: string;
+  flow: string;
   areaName: string;
   categoryName: string;
   jobTitleName: string | null;
   difficulty: string;
   experienceBand: string | null;
   previewEnabled: boolean;
-  questions: { id: string; sequence: number; text: string; options: { id: string; text: string }[] }[];
+  questions: (PreviewMcqQuestion | PreviewCodingQuestion)[];
 };
 
 /** Display-safe preview payload (no correctOptionId, no scoring metadata). */
@@ -402,6 +594,7 @@ export async function getPreviewData(
     select: {
       id: true,
       status: true,
+      flow: true,
       difficulty: true,
       experienceBand: true,
       previewEnabled: true,
@@ -416,6 +609,7 @@ export async function getPreviewData(
   })) as {
     id: string;
     status: string;
+    flow: string;
     difficulty: string;
     experienceBand: string | null;
     previewEnabled: boolean;
@@ -428,6 +622,7 @@ export async function getPreviewData(
 
   return {
     assessmentId: assessment.id,
+    flow: assessment.flow,
     areaName: assessment.areaOfInterest.name,
     categoryName: assessment.category.name,
     jobTitleName: assessment.jobTitle?.name ?? null,
@@ -435,8 +630,12 @@ export async function getPreviewData(
     experienceBand: assessment.experienceBand,
     previewEnabled: assessment.previewEnabled,
     questions: assessment.questions.map((q) => {
+      if (isCodingSnapshot(q.questionSnapshot)) {
+        return toCodingClientView(q.id, q.sequence, parseCodingSnapshot(q.questionSnapshot));
+      }
       const snap: QuestionSnapshot = parseSnapshot(q.questionSnapshot);
       return {
+        kind: "MCQ" as const,
         id: q.id,
         sequence: q.sequence,
         text: snap.questionText,
