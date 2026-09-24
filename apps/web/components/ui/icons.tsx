@@ -145,3 +145,10 @@ export const IconMedal = (p: P) => (
     <path d="m8.5 14-2 8 5.5-3 5.5 3-2-8" />
   </svg>
 );
+
+export const IconCheckCircle = (p: P) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="m8.5 12.5 2.5 2.5 4.5-5" />
+  </svg>
+);

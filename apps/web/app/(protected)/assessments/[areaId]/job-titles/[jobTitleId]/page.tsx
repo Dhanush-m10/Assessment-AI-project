@@ -63,11 +63,12 @@ export default async function JobTitleSetupPage({
             <div className="mt-6">
               <SetupForm
                 showExperience
+                showAdaptive={!isCoding}
                 maxCount={isCoding ? CODING_COUNT_MAX : undefined}
                 countNoun={isCoding ? "challenges" : "questions"}
                 hrefFor={(p) => {
                   const base = `/assessments/${areaId}/job-titles/${jobTitleId}`;
-                  const query = `difficulty=${p.difficulty}&experience=${p.experience}&count=${p.count}&preview=${p.preview ? "on" : "off"}`;
+                  const query = `difficulty=${p.difficulty}&experience=${p.experience}&count=${p.count}&preview=${p.preview ? "on" : "off"}&adaptive=${p.adaptive ? "on" : "off"}`;
                   return assessmentFlow === "BASIC_SKILLS_MCQ" || isCoding
                     ? `${base}/skills?${query}`
                     : `${base}/jd?${query}`;

@@ -125,7 +125,9 @@ export async function getTakingData(
 ): Promise<TakingData | null> {
   const db = getPrisma();
   const assessment = (await db.assessment.findFirst({
-    where: { id: assessmentId, userId },
+    // Adaptive assessments are served one question at a time by
+    // lib/assessment/adaptive.ts — the full-set standard screen never applies.
+    where: { id: assessmentId, userId, adaptiveEnabled: false },
     select: {
       id: true,
       status: true,
@@ -189,7 +191,9 @@ export async function saveAnswer(args: {
   const row = (await db.assessmentQuestion.findFirst({
     where: {
       id: args.assessmentQuestionId,
-      assessment: { userId: args.userId, status: "IN_PROGRESS" },
+      // Standard save path only; adaptive answers grade + advance via
+      // answerAdaptiveQuestion (concurrency-safe, server-authoritative).
+      assessment: { userId: args.userId, status: "IN_PROGRESS", adaptiveEnabled: false },
     },
     select: { id: true, questionSnapshot: true },
   })) as { id: string; questionSnapshot: unknown } | null;

@@ -11,10 +11,12 @@ import {
   submitMcqAssessment,
 } from "@/lib/assessment/general";
 import {
+  createAdaptiveAssessment,
   createRoleAssessment,
   parseExperience,
   type JdChoice,
 } from "@/lib/assessment/basic-mcq";
+import { answerAdaptiveQuestion, type AdaptiveTakingData } from "@/lib/assessment/adaptive";
 import { replaceQuestion, startFromPreview } from "@/lib/assessment/engine";
 import {
   runCodingCode,
@@ -111,7 +113,11 @@ export async function startBasicMcqAssessment(
     .map((v) => v.trim())
     .filter(Boolean);
 
-  const result = await createRoleAssessment({
+  // Adaptive V1: optional mode layered on the BASIC_MCQ / BASIC_SKILLS_MCQ
+  // flows. The flag is a configuration choice only — every adaptive rule
+  // (skills, difficulty walk, selection) is enforced server-side.
+  const adaptive = formData.get("adaptive") === "on";
+  const createArgs = {
     userId: user.id,
     areaId,
     jobTitleId,
@@ -122,7 +128,10 @@ export async function startBasicMcqAssessment(
     jd,
     clientRequestId,
     selectedSkillIds,
-  });
+  };
+  const result = adaptive
+    ? await createAdaptiveAssessment(createArgs)
+    : await createRoleAssessment(createArgs);
 
   if (!result.ok) {
     if (result.reason === "insufficient") {
@@ -230,4 +239,21 @@ export async function submitCodeAction(
 ): Promise<SubmitCodeResult> {
   const user = await requireUser();
   return submitCodingQuestion(user.id, assessmentQuestionId, code);
+}
+
+/**
+ * Answers the CURRENT adaptive question. The client sends only
+ * {assessmentQuestionId, optionId}; correctness, difficulty/skill state and
+ * the next question are computed server-side and never returned (the
+ * response carries the next question's safe projection only). Duplicate
+ * submissions are idempotent — the assessment advances exactly once.
+ */
+export async function answerAdaptiveAction(
+  assessmentQuestionId: string,
+  optionId: string,
+): Promise<{ ok: boolean; data?: AdaptiveTakingData; error?: string }> {
+  const user = await requireUser();
+  const result = await answerAdaptiveQuestion(user.id, assessmentQuestionId, optionId);
+  if (!result.ok) return { ok: false, error: result.error };
+  return { ok: true, data: result.data };
 }

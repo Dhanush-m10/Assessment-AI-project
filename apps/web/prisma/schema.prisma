@@ -410,6 +410,10 @@ model Assessment {
   experienceBand        ExperienceBand?
   requestedQuestionCount Int
   previewEnabled        Boolean
+  /// Phase 8: Adaptive Assessment V1 — an optional MODE/configuration on top
+  /// of the existing flows (never a fifth flow). False for every assessment
+  /// created before Phase 8; standard behavior is bit-for-bit unchanged.
+  adaptiveEnabled       Boolean             @default(false)
   status                AssessmentStatus    @default(CONFIGURING)
   /// JD reference and immutable content snapshot (spec §48); all null for
   /// GENERAL assessments.

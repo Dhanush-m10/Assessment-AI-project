@@ -40,6 +40,7 @@ export default async function JdPage({
     count?: string;
     preview?: string;
     skills?: string;
+    adaptive?: string;
   }>;
 }) {
   const { areaId, jobTitleId } = await params;
@@ -49,6 +50,7 @@ export default async function JdPage({
   const difficulty = parseDifficulty(sp.difficulty ?? "");
   const experience = parseExperience(sp.experience ?? "");
   const preview = sp.preview === "on";
+  const adaptive = sp.adaptive === "on";
 
   const ctxResult = await validateRoleContext(areaId, jobTitleId);
   if (!ctxResult.ok) notFound();
@@ -66,7 +68,7 @@ export default async function JdPage({
   const count = isCoding ? parseCodingCount(sp.count ?? "") : parseCount(sp.count ?? "");
 
   const setupHref = `/assessments/${areaId}/job-titles/${jobTitleId}`;
-  const configQuery = `difficulty=${sp.difficulty ?? ""}&experience=${sp.experience ?? ""}&count=${sp.count ?? ""}&preview=${preview ? "on" : "off"}`;
+  const configQuery = `difficulty=${sp.difficulty ?? ""}&experience=${sp.experience ?? ""}&count=${sp.count ?? ""}&preview=${preview ? "on" : "off"}&adaptive=${adaptive ? "on" : "off"}`;
   const backHref = skillsFlow
     ? `/assessments/${areaId}/job-titles/${jobTitleId}/skills?${configQuery}`
     : setupHref;
@@ -156,7 +158,11 @@ export default async function JdPage({
           </div>
           <div>
             <dt className="text-slate-500">Preview</dt>
-            <dd className="font-bold text-slate-900">{preview ? "On" : "Off"}</dd>
+            <dd className="font-bold text-slate-900">{adaptive ? "—" : preview ? "On" : "Off"}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Mode</dt>
+            <dd className="font-bold text-slate-900">{adaptive ? "Adaptive" : "Standard"}</dd>
           </div>
         </dl>
 
@@ -192,6 +198,7 @@ export default async function JdPage({
             preview={preview}
             jds={jds}
             skillIds={skillIdsParam}
+            adaptive={adaptive}
           />
         </div>
       </Card>

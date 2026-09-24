@@ -367,6 +367,8 @@ export type AssessmentResult = {
   jobTitleName: string | null;
   flow: string;
   status: string;
+  /** Phase 8: small "Adaptive" mode indicator on the result (Part O). */
+  adaptiveEnabled: boolean;
   difficulty: string;
   experienceBand: string | null;
   finalPercentage: number | null;
@@ -402,6 +404,7 @@ export async function getAssessmentResult(
     id: string;
     flow: string;
     status: string;
+    adaptiveEnabled: boolean;
     difficulty: string;
     experienceBand: string | null;
     finalPercentage: number | null;
@@ -419,6 +422,7 @@ export async function getAssessmentResult(
       id: true,
       flow: true,
       status: true,
+      adaptiveEnabled: true,
       difficulty: true,
       experienceBand: true,
       finalPercentage: true,
@@ -488,6 +492,7 @@ export async function getAssessmentResult(
     jobTitleName: assessment.jobTitle?.name ?? null,
     flow: assessment.flow,
     status: assessment.status,
+    adaptiveEnabled: assessment.adaptiveEnabled,
     difficulty: assessment.difficulty,
     experienceBand: assessment.experienceBand,
     finalPercentage: assessment.finalPercentage,

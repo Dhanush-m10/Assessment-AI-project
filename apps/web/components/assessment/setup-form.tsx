@@ -20,23 +20,29 @@ export function SetupForm({
   showExperience,
   maxCount = GENERAL_COUNT_MAX,
   countNoun = "questions",
+  showAdaptive = false,
 }: {
   hrefFor: (p: {
     difficulty: string;
     experience: string;
     count: number;
     preview: boolean;
+    adaptive: boolean;
   }) => string;
   showExperience: boolean;
   /** D-LIMITS: 1-50 for MCQ flows, 1-10 for CODING. */
   maxCount?: number;
   countNoun?: string;
+  /** Phase 8: show the Standard/Adaptive mode choice (BASIC_MCQ and
+   *  BASIC_SKILLS_MCQ only — never GENERAL, never CODING in V1). */
+  showAdaptive?: boolean;
 }) {
   const router = useRouter();
   const [difficulty, setDifficulty] = useState("EASY");
   const [experience, setExperience] = useState("Y0_2");
   const [count, setCount] = useState(Math.min(10, maxCount));
   const [preview, setPreview] = useState(false);
+  const [adaptive, setAdaptive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const go = () => {
@@ -45,7 +51,8 @@ export function SetupForm({
       return;
     }
     setError(null);
-    router.push(hrefFor({ difficulty, experience, count, preview }));
+    // Adaptive assessments start immediately (no fixed set to preview).
+    router.push(hrefFor({ difficulty, experience, count, preview: adaptive ? false : preview, adaptive }));
   };
 
   return (
@@ -125,17 +132,78 @@ export function SetupForm({
         </div>
       </div>
 
-      <label className="flex cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3">
+      {showAdaptive && (
+        <fieldset>
+          <legend className="text-sm font-semibold text-slate-800">Assessment mode</legend>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Assessment mode">
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 transition ${
+                !adaptive
+                  ? "border-blue-600 bg-blue-50/60 ring-1 ring-blue-600/30"
+                  : "border-slate-200 bg-white hover:border-slate-300"
+              }`}
+            >
+              <input
+                type="radio"
+                name="assessmentMode"
+                checked={!adaptive}
+                onChange={() => setAdaptive(false)}
+                className="mt-0.5 h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-600/40"
+              />
+              <span>
+                <span className="block text-sm font-bold text-slate-900">Standard</span>
+                <span className="mt-0.5 block text-xs text-slate-500">
+                  A fixed set of questions generated up front. Default.
+                </span>
+              </span>
+            </label>
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 transition ${
+                adaptive
+                  ? "border-blue-600 bg-blue-50/60 ring-1 ring-blue-600/30"
+                  : "border-slate-200 bg-white hover:border-slate-300"
+              }`}
+            >
+              <input
+                type="radio"
+                name="assessmentMode"
+                checked={adaptive}
+                onChange={() => {
+                  setAdaptive(true);
+                  setPreview(false);
+                }}
+                className="mt-0.5 h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-600/40"
+              />
+              <span>
+                <span className="block text-sm font-bold text-slate-900">Adaptive</span>
+                <span className="mt-0.5 block text-xs text-slate-500">
+                  Adaptive mode adjusts question difficulty and skill focus based on your
+                  responses to better understand your current skill level.
+                </span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+      )}
+
+      <label
+        className={`flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 ${
+          adaptive ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+        }`}
+      >
         <span>
           <span className="block text-sm font-bold text-slate-800">Preview questions</span>
           <span className="mt-0.5 block text-xs text-slate-500">
-            Review the selected questions and swap any of them before starting.
+            {adaptive
+              ? "Not available in Adaptive mode — questions are chosen as you go."
+              : "Review the selected questions and swap any of them before starting."}
           </span>
         </span>
         <span className="relative inline-flex">
           <input
             type="checkbox"
             checked={preview}
+            disabled={adaptive}
             onChange={(e) => setPreview(e.target.checked)}
             className="peer sr-only"
           />

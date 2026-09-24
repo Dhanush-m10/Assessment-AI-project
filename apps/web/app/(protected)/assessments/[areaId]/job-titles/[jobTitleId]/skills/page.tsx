@@ -29,6 +29,7 @@ export default async function SkillSelectionPage({
     experience?: string;
     count?: string;
     preview?: string;
+    adaptive?: string;
   }>;
 }) {
   const { areaId, jobTitleId } = await params;
@@ -69,7 +70,8 @@ export default async function SkillSelectionPage({
   }
 
   const skills = await listTitleSkills(jobTitleId);
-  const configQuery = `difficulty=${difficulty}&experience=${experience}&count=${count}&preview=${preview ? "on" : "off"}`;
+  const adaptive = sp.adaptive === "on";
+  const configQuery = `difficulty=${difficulty}&experience=${experience}&count=${count}&preview=${preview ? "on" : "off"}&adaptive=${adaptive ? "on" : "off"}`;
   const jdHref = `/assessments/${areaId}/job-titles/${jobTitleId}/jd?${configQuery}`;
 
   return (

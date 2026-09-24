@@ -51,6 +51,7 @@ export type SelectionContext = {
 
 export type EligibleQuestion = {
   id: string;
+  difficulty: string;
   questionText: string;
   options: { id: string; position: number; text: string; isCorrect: boolean }[];
   skillIds: string[];
@@ -88,6 +89,7 @@ export async function selectEligibleQuestions(
     orderBy: { id: "asc" },
     select: {
       id: true,
+      difficulty: true,
       questionText: true,
       options: {
         orderBy: { position: "asc" },
@@ -99,6 +101,7 @@ export async function selectEligibleQuestions(
 
   const shaped = rows.map((r) => ({
     id: r.id,
+    difficulty: r.difficulty,
     questionText: r.questionText,
     options: r.options,
     skillIds: r.skills.map((s) => s.skillId),
@@ -386,6 +389,7 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
               questionSnapshot: buildSnapshot({
                 questionText: q.questionText,
                 options: q.options,
+                difficulty: q.difficulty,
               }) as unknown as Record<string, unknown>,
             })),
     });
@@ -554,6 +558,7 @@ export async function replaceQuestion(
         questionSnapshot: buildSnapshot({
           questionText: next.questionText,
           options: next.options,
+          difficulty: next.difficulty,
         }) as unknown as Record<string, unknown>,
       },
     });

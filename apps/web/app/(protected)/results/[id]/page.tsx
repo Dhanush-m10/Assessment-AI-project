@@ -42,6 +42,11 @@ export default async function ResultDetailPage({
         {result.jobTitleName && (
           <p className="mt-1 text-sm text-slate-500">{result.jobTitleName}</p>
         )}
+        {result.adaptiveEnabled && (
+          <span className="mt-2 inline-flex items-center rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700 ring-1 ring-blue-200">
+            Adaptive Assessment
+          </span>
+        )}
 
         <div className="mt-6 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
           <div>

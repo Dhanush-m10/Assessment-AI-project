@@ -11,6 +11,10 @@ export type QuestionSnapshot = {
   questionText: string;
   options: { id: string; position: number; text: string }[];
   correctOptionId: string;
+  /** Frozen at serve time (Phase 8): the difficulty this question was
+   *  selected at. Additive — snapshots written before Phase 8 lack it and
+   *  remain valid; standard flows ignore it, adaptive replay reads it. */
+  difficulty?: string;
 };
 
 export type ClientQuestion = {
@@ -23,6 +27,7 @@ export type ClientQuestion = {
 export function buildSnapshot(input: {
   questionText: string;
   options: { id: string; position: number; text: string; isCorrect: boolean }[];
+  difficulty?: string;
 }): QuestionSnapshot {
   const correct = input.options.filter((o) => o.isCorrect);
   if (correct.length !== 1) {
@@ -33,6 +38,7 @@ export function buildSnapshot(input: {
     questionText: input.questionText,
     options: input.options.map((o) => ({ id: o.id, position: o.position, text: o.text })),
     correctOptionId: correct[0].id,
+    ...(input.difficulty ? { difficulty: input.difficulty } : {}),
   };
 }
 
