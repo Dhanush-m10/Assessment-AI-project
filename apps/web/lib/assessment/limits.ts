@@ -18,6 +18,23 @@ export function parseCodingCount(value: string): number | null {
 export const DIFFICULTIES = ["EASY", "MEDIUM", "HARD"] as const;
 export type DifficultyValue = (typeof DIFFICULTIES)[number];
 
+/** Literal mirror of the Prisma `AssessmentFlow` enum (exactly four flows,
+ *  C3). Structural typing keeps this assignable to/from the generated enum
+ *  without importing generated-only symbols. */
+export const ASSESSMENT_FLOWS = [
+  "GENERAL",
+  "BASIC_MCQ",
+  "BASIC_SKILLS_MCQ",
+  "CODING",
+] as const;
+export type AssessmentFlowValue = (typeof ASSESSMENT_FLOWS)[number];
+
+/** Literal mirror of the Prisma `ExperienceBand` enum (D-EXP). Moved here
+ *  from basic-mcq.ts (re-exported there) so the engine draft can type
+ *  experienceBand exactly without a circular import. */
+export const EXPERIENCE_BANDS = ["Y0_2", "Y2_5", "Y5_8"] as const;
+export type ExperienceBandValue = (typeof EXPERIENCE_BANDS)[number];
+
 export const DIFFICULTIES_META: { value: DifficultyValue; label: string; hint: string }[] = [
   { value: "EASY", label: "Easy", hint: "Fundamentals" },
   { value: "MEDIUM", label: "Medium", hint: "Working knowledge" },

@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import {
   isCodingSnapshot,
@@ -335,7 +335,7 @@ export async function submitCodingAssessment(
   const correctCount = scored.filter((s) => s.correct).length;
   const percentage = (correctCount / questions.length) * 100;
 
-  await db.$transaction(async (tx: PrismaClient) => {
+  await db.$transaction(async (tx: Prisma.TransactionClient) => {
     for (const s of scored) {
       await tx.userAnswer.update({
         where: { id: s.answer.id },

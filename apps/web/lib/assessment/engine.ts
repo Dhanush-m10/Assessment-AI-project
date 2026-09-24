@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import {
   buildCodingSnapshot,
@@ -10,7 +10,11 @@ import {
   type ClientCodingQuestion,
   type QuestionSnapshot,
 } from "@/lib/assessment/snapshot";
-import type { DifficultyValue } from "@/lib/assessment/limits";
+import type {
+  AssessmentFlowValue,
+  DifficultyValue,
+  ExperienceBandValue,
+} from "@/lib/assessment/limits";
 
 /**
  * Shared MCQ assessment engine (Phase 5).
@@ -37,7 +41,7 @@ import type { DifficultyValue } from "@/lib/assessment/limits";
 
 export type SelectionContext = {
   userId: string;
-  flow: "GENERAL" | "BASIC_MCQ" | "BASIC_SKILLS_MCQ" | "CODING";
+  flow: AssessmentFlowValue;
   difficulty: DifficultyValue;
   areaId?: string;
   jobTitleId?: string;
@@ -51,7 +55,7 @@ export type SelectionContext = {
 
 export type EligibleQuestion = {
   id: string;
-  difficulty: string;
+  difficulty: DifficultyValue;
   questionText: string;
   options: { id: string; position: number; text: string; isCorrect: boolean }[];
   skillIds: string[];
@@ -250,12 +254,12 @@ export async function selectWithQuotas(
 export type AssessmentDraft = {
   userId: string;
   clientRequestId: string;
-  flow: "GENERAL" | "BASIC_MCQ" | "BASIC_SKILLS_MCQ" | "CODING";
+  flow: AssessmentFlowValue;
   categoryId: string;
   areaId: string;
   jobTitleId: string | null;
   difficulty: DifficultyValue;
-  experienceBand: string | null;
+  experienceBand: ExperienceBandValue | null;
   count: number;
   previewEnabled: boolean;
   jd: { jdId: string | null; jdSource: "LIBRARY" | "USER_PASTED"; content: string } | null;
@@ -340,7 +344,7 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
   }
   const initialStatus = args.previewEnabled ? "PREVIEW" : "IN_PROGRESS";
 
-  const created = (await db.$transaction(async (tx: PrismaClient) => {
+  const created: { id: string } = await db.$transaction(async (tx: Prisma.TransactionClient) => {
     const assessment = await tx.assessment.create({
       data: {
         userId: args.userId,
@@ -376,7 +380,7 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
               // Coding V1 has no per-skill quotas (A4 attribution is a
               // quota concept); priority skills live in AssessmentSkill.
               skillId: null,
-              questionSnapshot: buildCodingSnapshot(q) as unknown as Record<string, unknown>,
+              questionSnapshot: buildCodingSnapshot(q),
             }))
           : selected.map((q, i) => ({
               assessmentId: assessment.id,
@@ -390,7 +394,7 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
                 questionText: q.questionText,
                 options: q.options,
                 difficulty: q.difficulty,
-              }) as unknown as Record<string, unknown>,
+              }),
             })),
     });
     if (args.quotaSkills?.length) {
@@ -411,7 +415,7 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
       });
     }
     return assessment;
-  })) as { id: string };
+  });
 
   return { ok: true, assessmentId: created.id, status: initialStatus };
 }
@@ -492,7 +496,7 @@ export async function replaceQuestion(
     const nextCoding = codingCandidates[0];
     if (!nextCoding) return { ok: false, reason: "ai-required" };
 
-    await db.$transaction(async (tx: PrismaClient) => {
+    await db.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.assessmentQuestion.delete({ where: { id: target.id } });
       await tx.assessmentQuestion.create({
         data: {
@@ -503,10 +507,7 @@ export async function replaceQuestion(
           codingQuestionId: nextCoding.id,
           skillId: null,
           replacedFromId: target.id,
-          questionSnapshot: buildCodingSnapshot(nextCoding) as unknown as Record<
-            string,
-            unknown
-          >,
+          questionSnapshot: buildCodingSnapshot(nextCoding),
         },
       });
     });
@@ -542,7 +543,7 @@ export async function replaceQuestion(
   const next = candidates[0];
   if (!next) return { ok: false, reason: "ai-required" };
 
-  await db.$transaction(async (tx: PrismaClient) => {
+  await db.$transaction(async (tx: Prisma.TransactionClient) => {
     // Delete first: frees (assessmentId, sequence) and (assessmentId,
     // libraryQuestionId) inside this tx so the insert cannot collide.
     await tx.assessmentQuestion.delete({ where: { id: target.id } });
@@ -559,7 +560,7 @@ export async function replaceQuestion(
           questionText: next.questionText,
           options: next.options,
           difficulty: next.difficulty,
-        }) as unknown as Record<string, unknown>,
+        }),
       },
     });
   });

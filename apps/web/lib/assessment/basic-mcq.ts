@@ -14,8 +14,16 @@ import type { DifficultyValue } from "@/lib/assessment/limits";
  * (MANUAL / AI / CSV), which describes how a library JD was authored.
  */
 
-export const EXPERIENCE_BANDS = ["Y0_2", "Y2_5", "Y5_8"] as const;
-export type ExperienceBandValue = (typeof EXPERIENCE_BANDS)[number];
+// Moved to limits.ts (shared, dependency-free) so the engine draft can type
+// experienceBand exactly against the Prisma ExperienceBand enum mirror
+// without a circular import. Re-exported here for existing consumers.
+export { EXPERIENCE_BANDS } from "@/lib/assessment/limits";
+export type { ExperienceBandValue } from "@/lib/assessment/limits";
+import {
+  EXPERIENCE_BANDS,
+  type AssessmentFlowValue,
+  type ExperienceBandValue,
+} from "@/lib/assessment/limits";
 
 export function parseExperience(value: string): ExperienceBandValue | null {
   return (EXPERIENCE_BANDS as readonly string[]).includes(value)
@@ -24,7 +32,7 @@ export function parseExperience(value: string): ExperienceBandValue | null {
 }
 
 export { PASTED_JD_MAX_CHARS } from "@/lib/assessment/jd-limits";
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import {
   CODING_COUNT_MAX,
   CODING_COUNT_MIN,
@@ -43,7 +51,7 @@ export type BasicContext = {
   categoryId: string;
 };
 
-export type RoleContext = BasicContext & { assessmentFlow: string };
+export type RoleContext = BasicContext & { assessmentFlow: AssessmentFlowValue };
 
 export type RoleContextResult =
   | { ok: true; context: RoleContext }
@@ -66,7 +74,7 @@ export async function validateRoleContext(
   const jobTitle = (await getPrisma().jobTitle.findFirst({
     where: { id: jobTitleId, areaOfInterestId: area.id, status: "LIVE" },
     select: { id: true, name: true, assessmentFlow: true },
-  })) as { id: string; name: string; assessmentFlow: string } | null;
+  })) as { id: string; name: string; assessmentFlow: AssessmentFlowValue } | null;
   if (!jobTitle) return { ok: false, reason: "invalid-job-title" };
 
   return {
@@ -100,7 +108,7 @@ export async function validateBasicContext(
   const jobTitle = (await getPrisma().jobTitle.findFirst({
     where: { id: jobTitleId, areaOfInterestId: area.id, status: "LIVE" },
     select: { id: true, name: true, assessmentFlow: true },
-  })) as { id: string; name: string; assessmentFlow: string } | null;
+  })) as { id: string; name: string; assessmentFlow: AssessmentFlowValue } | null;
   if (!jobTitle) return { ok: false, reason: "invalid-job-title" };
   if (jobTitle.assessmentFlow !== "BASIC_MCQ") return { ok: false, reason: "wrong-flow" };
 
@@ -544,7 +552,7 @@ export async function createAdaptiveAssessment(args: {
   };
 
   const db = getPrisma();
-  const created = (await db.$transaction(async (tx: PrismaClient) => {
+  const created: { id: string } = await db.$transaction(async (tx: Prisma.TransactionClient) => {
     const assessment = await tx.assessment.create({
       data: {
         userId: args.userId,
@@ -577,7 +585,7 @@ export async function createAdaptiveAssessment(args: {
       });
     }
     return assessment;
-  })) as { id: string };
+  });
 
   // Serve the first question through the same read-guarantee used on every
   // later request. If the pool cannot serve even one question (raced library

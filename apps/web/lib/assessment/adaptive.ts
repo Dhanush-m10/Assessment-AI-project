@@ -1,7 +1,8 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { selectEligibleQuestions } from "@/lib/assessment/engine";
 import { buildSnapshot, parseSnapshot } from "@/lib/assessment/snapshot";
+import type { AssessmentFlowValue } from "@/lib/assessment/limits";
 import {
   buildBlueprint,
   difficultyTrials,
@@ -129,7 +130,7 @@ async function loadContext(
   })) as {
     id: string;
     status: string;
-    flow: string;
+    flow: AssessmentFlowValue;
     difficulty: string;
     requestedQuestionCount: number;
     jobTitleId: string | null;
@@ -236,7 +237,7 @@ async function serveNextQuestion(ctx: AdaptiveContext): Promise<ServeOutcome> {
       const next = candidates[0];
       if (!next) continue;
       try {
-        await db.$transaction(async (tx: PrismaClient) => {
+        await db.$transaction(async (tx: Prisma.TransactionClient) => {
           await tx.assessmentQuestion.create({
             data: {
               assessmentId: ctx.assessmentId,
@@ -250,7 +251,7 @@ async function serveNextQuestion(ctx: AdaptiveContext): Promise<ServeOutcome> {
                 questionText: next.questionText,
                 options: next.options,
                 difficulty,
-              }) as unknown as Record<string, unknown>,
+              }),
             },
           });
         });
@@ -376,7 +377,7 @@ export async function answerAdaptiveQuestion(
 
   const isCorrect = optionId === snapshot.correctOptionId;
   try {
-    await db.$transaction(async (tx: PrismaClient) => {
+    await db.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.userAnswer.create({
         data: {
           assessmentQuestionId: row.id,

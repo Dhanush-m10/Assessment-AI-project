@@ -1,4 +1,9 @@
 import { isCodingSnapshot, parseCodingSnapshot } from "@/lib/assessment/snapshot";
+import type {
+  AssessmentFlowValue,
+  DifficultyValue,
+  ExperienceBandValue,
+} from "@/lib/assessment/limits";
 import { getPrisma } from "@/lib/prisma";
 
 /**
@@ -26,14 +31,14 @@ type CompletedSelect = {
   id: string;
   finalPercentage: number | null;
   completedAt: Date | null;
-  flow: string;
+  flow: AssessmentFlowValue;
   areaOfInterest: { name: string };
   category: { name: string };
 };
 type OpenSelect = {
   id: string;
-  difficulty: string;
-  experienceBand: string | null;
+  difficulty: DifficultyValue;
+  experienceBand: ExperienceBandValue | null;
   areaOfInterest: { name: string };
   category: { name: string };
 } | null;
@@ -300,11 +305,18 @@ export async function getResultsHistory(
   userId: string,
   filter: ResultsFilter,
 ): Promise<CompletedRow[]> {
+  // Mutable, exactly-typed array: Prisma's EnumAssessmentFlowFilter.in wants
+  // AssessmentFlow[] (a readonly tuple is not assignable to it).
+  const personalisedFlows: AssessmentFlowValue[] = [
+    "BASIC_MCQ",
+    "BASIC_SKILLS_MCQ",
+    "CODING",
+  ];
   const flowWhere =
     filter === "general"
       ? { flow: "GENERAL" as const }
       : filter === "personalised"
-        ? { flow: { in: ["BASIC_MCQ", "BASIC_SKILLS_MCQ", "CODING"] as const } }
+        ? { flow: { in: personalisedFlows } }
         : {};
 
   const rows = (await prisma().assessment.findMany({
