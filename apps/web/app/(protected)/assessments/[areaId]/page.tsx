@@ -78,22 +78,26 @@ export default async function AreaSetupPage({
               }
             />
           ) : area.classification !== "GENERAL" ? (
-            <EmptyState
-              className="mt-6"
-              title="Role-based track"
-              message="This area runs through job-title, JD and skill-based flows, which arrive after the General vertical slice. General areas are available now."
-              action={
-                <Link
-                  href="/assessments"
-                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-                >
-                  Browse assessments <IconArrowRight className="h-4 w-4" />
-                </Link>
-              }
-            />
+            <div className="mt-6">
+              <p className="text-sm text-slate-500">
+                This area runs through job titles. Pick your role to configure a Basic MCQ
+                assessment.
+              </p>
+              <Link
+                href={`/assessments/${area.id}/job-titles`}
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+              >
+                Choose job title <IconArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
           ) : (
             <div className="mt-6">
-              <SetupForm areaId={area.id} />
+              <SetupForm
+                showExperience={false}
+                hrefFor={(p) =>
+                  `/assessments/${area.id}/preview?difficulty=${p.difficulty}&count=${p.count}&preview=${p.preview ? "on" : "off"}`
+                }
+              />
             </div>
           )}
         </div>

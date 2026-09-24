@@ -17,6 +17,7 @@ export function StartForm({
   areaId: string;
   difficulty: string;
   count: number;
+  preview: boolean;
 }) {
   const [state, formAction] = useActionState(startGeneralAssessment, {});
   const [pending, setPending] = useState(false);

@@ -151,7 +151,10 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
   type Acc = { total: number; correct: number; monthTotal: number; monthCorrect: number };
   const bySkill = new Map<string, Acc>();
   for (const a of answers) {
-    const key = a.assessmentQuestion.skillId ?? "general";
+    // Only real skill attributions count as skills; GENERAL questions carry
+    // skillId null by decision A4 and must not fabricate a pseudo-skill.
+    const key = a.assessmentQuestion.skillId;
+    if (!key) continue;
     const acc = bySkill.get(key) ?? { total: 0, correct: 0, monthTotal: 0, monthCorrect: 0 };
     acc.total += 1;
     if (a.isCorrect) acc.correct += 1;
@@ -169,8 +172,7 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
       select: { id: true, name: true },
     })) as SkillRef[]).map((s) => [s.id, s.name] as const),
   );
-  const labelFor = (key: string) =>
-    key === "general" ? "General aptitude" : (names.get(key) ?? "Skill");
+  const labelFor = (key: string) => names.get(key) ?? "Skill";
 
   const progressComparison = [...bySkill.entries()]
     .map(([key, acc]) => ({
@@ -322,7 +324,8 @@ export async function getSkillProgress(
   })) as AnswerNoDate[];
   const bySkill = new Map<string, { total: number; correct: number }>();
   for (const a of answers) {
-    const key = a.assessmentQuestion.skillId ?? "general";
+    const key = a.assessmentQuestion.skillId;
+    if (!key) continue;
     const acc = bySkill.get(key) ?? { total: 0, correct: 0 };
     acc.total += 1;
     if (a.isCorrect) acc.correct += 1;
@@ -336,7 +339,7 @@ export async function getSkillProgress(
   );
   return [...bySkill.entries()]
     .map(([key, acc]) => ({
-      name: key === "general" ? "General aptitude" : (names.get(key) ?? "Skill"),
+      name: names.get(key) ?? "Skill",
       pct: acc.total ? (acc.correct / acc.total) * 100 : 0,
       answered: acc.total,
     }))
@@ -413,7 +416,8 @@ export async function getAssessmentResult(
   })) as AnswerNoDate[];
   const bySkill = new Map<string, { correct: number; total: number }>();
   for (const a of answers) {
-    const key = a.assessmentQuestion.skillId ?? "general";
+    const key = a.assessmentQuestion.skillId;
+    if (!key) continue;
     const acc = bySkill.get(key) ?? { correct: 0, total: 0 };
     acc.total += 1;
     if (a.isCorrect) acc.correct += 1;
@@ -441,7 +445,7 @@ export async function getAssessmentResult(
     requestedQuestionCount: assessment.requestedQuestionCount,
     skills: assessment.skills.map((s) => s.skill.name),
     perSkill: [...bySkill.entries()].map(([key, v]) => ({
-      name: key === "general" ? "General aptitude" : (names.get(key) ?? "Skill"),
+      name: names.get(key) ?? "Skill",
       correct: v.correct,
       total: v.total,
     })),

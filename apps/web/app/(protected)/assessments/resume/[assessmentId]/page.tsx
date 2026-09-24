@@ -26,6 +26,7 @@ export default async function ResumePage({
   if (!assessment) notFound();
 
   if (assessment.status === "COMPLETED") redirect(`/results/${assessment.id}`);
+  if (assessment.status === "PREVIEW") redirect(`/assessments/preview/${assessment.id}`);
   if (assessment.status === "IN_PROGRESS") redirect(`/assessments/take/${assessment.id}`);
   redirect("/assessments");
 }

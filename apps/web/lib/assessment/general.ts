@@ -1,6 +1,10 @@
 import type { PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { buildSnapshot, parseSnapshot, type QuestionSnapshot } from "@/lib/assessment/snapshot";
+import { parseSnapshot, type QuestionSnapshot } from "@/lib/assessment/snapshot";
+import {
+  selectEligibleQuestions as selectEngineQuestions,
+  createAssessment as createEngineAssessment,
+} from "@/lib/assessment/engine";
 
 /**
  * GENERAL assessment engine (Phase 4 vertical slice).
@@ -44,47 +48,29 @@ type EligibleQuestion = {
   options: { id: string; position: number; text: string; isCorrect: boolean }[];
 };
 
+/** GENERAL selection = shared engine with a GENERAL/area context. */
 export async function selectEligibleQuestions(args: {
   userId: string;
   areaId: string;
   difficulty: DifficultyValue;
 }): Promise<EligibleQuestion[]> {
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  const rows = (await getPrisma().question.findMany({
-    where: {
-      status: "LIVE",
-      assessmentFlow: "GENERAL",
-      difficulty: args.difficulty,
-      areas: { some: { areaOfInterestId: args.areaId } },
-      // D-30DAY hard rule.
-      NOT: {
-        history: {
-          some: { userId: args.userId, lastCorrectAt: { gte: thirtyDaysAgo } },
-        },
-      },
-    },
-    orderBy: { id: "asc" },
-    select: {
-      id: true,
-      questionText: true,
-      options: {
-        orderBy: { position: "asc" },
-        select: { id: true, position: true, text: true, isCorrect: true },
-      },
-    },
-  })) as EligibleQuestion[];
-  return rows;
+  const rows = await selectEngineQuestions({
+    userId: args.userId,
+    flow: "GENERAL",
+    difficulty: args.difficulty,
+    areaId: args.areaId,
+  });
+  return rows.map((r) => ({ id: r.id, questionText: r.questionText, options: r.options }));
 }
 
 export type CreateResult =
-  | { ok: true; assessmentId: string }
+  | { ok: true; assessmentId: string; status: "PREVIEW" | "IN_PROGRESS" }
   | { ok: false; reason: "insufficient"; available: number }
   | { ok: false; reason: "invalid-area" };
 
 /**
- * Creates the Assessment + AssessmentQuestion snapshots in ONE transaction.
- * Idempotent via clientRequestId (spec §43): a replayed request returns the
- * originally created assessment instead of a duplicate row.
+ * Creates the Assessment + AssessmentQuestion snapshots via the shared engine
+ * (single transaction, clientRequestId idempotency, preview ON/OFF statuses).
  */
 export async function createGeneralAssessment(args: {
   userId: string;
@@ -92,73 +78,35 @@ export async function createGeneralAssessment(args: {
   difficulty: DifficultyValue;
   count: number;
   clientRequestId: string;
+  previewEnabled?: boolean;
 }): Promise<CreateResult> {
-  const db = getPrisma();
-
-  // Replay check first (unique index would also catch it inside the tx).
-  const existing = (await db.assessment.findUnique({
-    where: { clientRequestId: args.clientRequestId },
-    select: { id: true, userId: true },
-  })) as { id: string; userId: string } | null;
-  if (existing) {
-    return existing.userId === args.userId
-      ? { ok: true, assessmentId: existing.id }
-      : { ok: false, reason: "invalid-area" }; // key collision across users: treat as bad request
-  }
-
-  const area = (await db.areaOfInterest.findFirst({
+  const area = (await getPrisma().areaOfInterest.findFirst({
     where: { id: args.areaId, status: "LIVE", classification: "GENERAL" },
     select: { id: true, categoryId: true },
   })) as { id: string; categoryId: string } | null;
   if (!area) return { ok: false, reason: "invalid-area" };
 
-  const eligible = await selectEligibleQuestions({
+  const result = await createEngineAssessment({
     userId: args.userId,
+    clientRequestId: args.clientRequestId,
+    flow: "GENERAL",
+    categoryId: area.categoryId,
     areaId: area.id,
+    jobTitleId: null,
     difficulty: args.difficulty,
+    experienceBand: null,
+    count: args.count,
+    previewEnabled: args.previewEnabled ?? false,
+    jd: null,
+    selection: {
+      userId: args.userId,
+      flow: "GENERAL",
+      difficulty: args.difficulty,
+      areaId: area.id,
+    },
   });
-  if (eligible.length < args.count) {
-    return { ok: false, reason: "insufficient", available: eligible.length };
-  }
-  const selected = eligible.slice(0, args.count);
-
-  const created = (await db.$transaction(async (tx: PrismaClient) => {
-    const assessment = await tx.assessment.create({
-      data: {
-        userId: args.userId,
-        flow: "GENERAL",
-        mode: null,
-        categoryId: area.categoryId,
-        areaOfInterestId: area.id,
-        jobTitleId: null,
-        difficulty: args.difficulty,
-        experienceBand: null,
-        requestedQuestionCount: args.count,
-        previewEnabled: false,
-        status: "IN_PROGRESS",
-        startedAt: new Date(),
-        clientRequestId: args.clientRequestId,
-      },
-      select: { id: true },
-    });
-    await tx.assessmentQuestion.createMany({
-      data: selected.map((q, i) => ({
-        assessmentId: assessment.id,
-        sequence: i + 1,
-        source: "QUESTION_LIBRARY",
-        libraryQuestionId: q.id,
-        codingQuestionId: null,
-        skillId: null,
-        questionSnapshot: buildSnapshot({
-          questionText: q.questionText,
-          options: q.options,
-        }) as unknown as Record<string, unknown>,
-      })),
-    });
-    return assessment;
-  })) as { id: string };
-
-  return { ok: true, assessmentId: created.id };
+  if (!result.ok) return result;
+  return { ok: true, assessmentId: result.assessmentId, status: result.status };
 }
 
 export type TakingData = {
@@ -273,12 +221,13 @@ export type SubmitResult =
 
 /**
  * Authoritative submission + scoring (D-SCORE: 1 point per correct MCQ).
+ * Flow-agnostic: works for GENERAL and BASIC_MCQ (any snapshot-backed MCQ).
  * Everything is recomputed from snapshots in a single transaction:
  * answers -> correctness -> UserAnswer scores -> UserQuestionHistory
  * (30-day rule feed) -> Assessment finalScore/finalPercentage/COMPLETED.
  * Double submit is idempotent: a COMPLETED assessment returns its result.
  */
-export async function submitGeneralAssessment(
+export async function submitMcqAssessment(
   userId: string,
   assessmentId: string,
 ): Promise<SubmitResult> {

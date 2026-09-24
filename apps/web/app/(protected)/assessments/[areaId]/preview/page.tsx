@@ -23,7 +23,7 @@ export default async function PreviewPage({
   searchParams,
 }: {
   params: Promise<{ areaId: string }>;
-  searchParams: Promise<{ difficulty?: string; count?: string }>;
+  searchParams: Promise<{ difficulty?: string; count?: string; preview?: string }>;
 }) {
   const { areaId } = await params;
   const sp = await searchParams;
@@ -31,6 +31,7 @@ export default async function PreviewPage({
 
   const difficulty = parseDifficulty(sp.difficulty ?? "");
   const count = parseCount(sp.count ?? "");
+  const preview = sp.preview === "on";
 
   const area = (await getPrisma().areaOfInterest.findFirst({
     where: { id: areaId, status: "LIVE", classification: "GENERAL", category: { status: "LIVE" } },
@@ -86,6 +87,7 @@ export default async function PreviewPage({
             ["Difficulty", difficulty.charAt(0) + difficulty.slice(1).toLowerCase()],
             ["Questions", String(count)],
             ["Flow", "General"],
+            ["Preview", preview ? "On" : "Off"],
           ].map(([label, value]) => (
             <div key={label} className="flex justify-between px-4 py-3 text-sm">
               <dt className="text-slate-500">{label}</dt>
@@ -110,7 +112,7 @@ export default async function PreviewPage({
           />
         ) : (
           <div className="mt-6">
-            <StartForm areaId={area.id} difficulty={difficulty} count={count} />
+            <StartForm areaId={area.id} difficulty={difficulty} count={count} preview={preview} />
           </div>
         )}
       </Card>
