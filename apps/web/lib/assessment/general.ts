@@ -71,6 +71,10 @@ export type CreateResult =
 /**
  * Creates the Assessment + AssessmentQuestion snapshots via the shared engine
  * (single transaction, clientRequestId idempotency, preview ON/OFF statuses).
+ *
+ * `validatedArea` (optional): the area was already re-validated server-side
+ * in this same request by the caller (see engine.AssessmentDraft.validatedArea);
+ * when provided, the area is not queried again here or in the engine.
  */
 export async function createGeneralAssessment(args: {
   userId: string;
@@ -79,11 +83,14 @@ export async function createGeneralAssessment(args: {
   count: number;
   clientRequestId: string;
   previewEnabled?: boolean;
+  validatedArea?: { id: string; categoryId: string };
 }): Promise<CreateResult> {
-  const area = (await getPrisma().areaOfInterest.findFirst({
-    where: { id: args.areaId, status: "LIVE", classification: "GENERAL" },
-    select: { id: true, categoryId: true },
-  })) as { id: string; categoryId: string } | null;
+  const area: { id: string; categoryId: string } | null =
+    args.validatedArea ??
+    ((await getPrisma().areaOfInterest.findFirst({
+      where: { id: args.areaId, status: "LIVE", classification: "GENERAL" },
+      select: { id: true, categoryId: true },
+    })) as { id: string; categoryId: string } | null);
   if (!area) return { ok: false, reason: "invalid-area" };
 
   const result = await createEngineAssessment({
@@ -104,6 +111,7 @@ export async function createGeneralAssessment(args: {
       difficulty: args.difficulty,
       areaId: area.id,
     },
+    validatedArea: args.validatedArea,
   });
   if (!result.ok) return result;
   return { ok: true, assessmentId: result.assessmentId, status: result.status };

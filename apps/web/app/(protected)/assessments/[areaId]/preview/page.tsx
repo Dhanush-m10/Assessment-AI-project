@@ -19,16 +19,18 @@ export const metadata = { title: "Preview Assessment · Assessment AI" };
 
 /**
  * Preview/confirm step. Reads config from searchParams and RE-VALIDATES it
- * server-side (difficulty enum, 1–50 count, LIVE General area). Shows the
- * eligible pool size so an insufficient library is surfaced BEFORE creation.
+ * server-side (difficulty enum, 1–50 count, LIVE General area).
  *
- * Preview OFF skips this review step entirely: the page creates the
- * assessment immediately through the existing creation engine and redirects
- * to the taking screen, so the user never sees a preview UI when Preview is
- * OFF. Idempotency is the setup step's clientRequestId (unique index):
- * double-clicks and refreshes replay the same assessment, never duplicates.
- * Preview ON keeps the review: the Assessment row is only created when Start
- * is pressed, with the same clientRequestId.
+ * Preview ON shows the eligible pool size so an insufficient library is
+ * surfaced BEFORE creation. Preview OFF skips this review step entirely: the
+ * page creates the assessment immediately through the existing creation
+ * engine (which is authoritative for area validation, eligibility, question
+ * selection and the insufficient state) and redirects to the taking screen,
+ * so the user never sees a preview UI when Preview is OFF. Idempotency is the
+ * setup step's clientRequestId (unique index): double-clicks and refreshes
+ * replay the same assessment, never duplicates. Preview ON keeps the review:
+ * the Assessment row is only created when Start is pressed, with the same
+ * clientRequestId.
  */
 export default async function PreviewPage({
   params,
@@ -46,10 +48,13 @@ export default async function PreviewPage({
   const preview = sp.preview === "on";
   const clientRequestId = parseClientRequestId(sp.clientRequestId ?? "") ?? crypto.randomUUID();
 
+  // Single area load for this request: validation (LIVE + GENERAL + category
+  // LIVE) for notFound, plus the immutable {id, categoryId} passed into the
+  // creation engine on the Preview-OFF path so the area is not re-queried.
   const area = (await getPrisma().areaOfInterest.findFirst({
     where: { id: areaId, status: "LIVE", classification: "GENERAL", category: { status: "LIVE" } },
-    select: { id: true, name: true, category: { select: { name: true } } },
-  })) as { id: string; name: string; category: { name: string } } | null;
+    select: { id: true, categoryId: true, name: true, category: { select: { name: true } } },
+  })) as { id: string; categoryId: string; name: string; category: { name: string } } | null;
   if (!area) notFound();
 
   if (!difficulty || count === null) {
@@ -73,13 +78,19 @@ export default async function PreviewPage({
     );
   }
 
-  const eligible = await selectEligibleQuestions({ userId: user.id, areaId: area.id, difficulty });
-  let available = eligible.length;
-
-  if (!preview && available >= count) {
-    // Preview OFF: no review step — create directly via the existing engine
-    // (same path, idempotency and 30-day exclusion as the action) and land
-    // on the taking screen.
+  let available = 0;
+  if (preview) {
+    // Preview ON: show the eligible pool size BEFORE creation so an
+    // insufficient library is surfaced before Start.
+    const eligible = await selectEligibleQuestions({ userId: user.id, areaId: area.id, difficulty });
+    available = eligible.length;
+  } else {
+    // Preview OFF: no review step — the creation engine is authoritative for
+    // area validation, eligibility, question selection and the insufficient
+    // state (same path, idempotency and 30-day exclusion as the action). The
+    // area was re-validated above, so its immutable {id, categoryId} is
+    // passed through — it is not queried again — and we land on the taking
+    // screen.
     const result = await createGeneralAssessment({
       userId: user.id,
       areaId: area.id,
@@ -87,11 +98,11 @@ export default async function PreviewPage({
       count,
       clientRequestId,
       previewEnabled: false,
+      validatedArea: { id: area.id, categoryId: area.categoryId },
     });
     if (result.ok) redirect(`/assessments/take/${result.assessmentId}`);
     if (result.reason === "insufficient") {
-      // Rare race (pool shrank between the pre-check and creation): surface
-      // the controlled message with the engine's authoritative count.
+      // Engine's authoritative pool size — drives the message below.
       available = result.available;
     } else {
       return (

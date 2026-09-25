@@ -270,6 +270,15 @@ export type AssessmentDraft = {
   skillSources?: Record<string, ("USER_SELECTED" | "JD" | "JOB_TITLE")[]>;
   /** CODING: skill provenance rows without quotas (priority ordering only). */
   skillProvenance?: { skillId: string; sources: ("USER_SELECTED" | "JD" | "JOB_TITLE")[] }[];
+  /**
+   * Set ONLY by server-side callers that have re-validated this exact area
+   * within the SAME request with a check at least as strong as
+   * `status: "LIVE"` (e.g. the GENERAL preview page validates LIVE + GENERAL
+   * + category LIVE). Lets the engine skip its own area re-query; the
+   * immutable values come from the caller's own findFirst — never from
+   * client input. All other callers omit it and keep the engine's lookup.
+   */
+  validatedArea?: { id: string; categoryId: string };
 };
 
 export type CreateResult =
@@ -299,10 +308,14 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
     };
   }
 
-  const area = (await db.areaOfInterest.findFirst({
-    where: { id: args.areaId, status: "LIVE" },
-    select: { id: true },
-  })) as { id: string } | null;
+  // validatedArea: caller already re-validated this area in this request
+  // (see AssessmentDraft.validatedArea) — skip the re-query.
+  const area = args.validatedArea
+    ? { id: args.validatedArea.id }
+    : ((await db.areaOfInterest.findFirst({
+        where: { id: args.areaId, status: "LIVE" },
+        select: { id: true },
+      })) as { id: string } | null);
   if (!area) return { ok: false, reason: "invalid-area" };
 
   let selected: (EligibleQuestion & { quotaSkillId: string | null })[];
