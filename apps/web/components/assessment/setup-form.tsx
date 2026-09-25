@@ -8,27 +8,25 @@ import {
   GENERAL_COUNT_MIN,
 } from "@/lib/assessment/limits";
 import { EXPERIENCE_META } from "@/components/assessment/experience-meta";
+import { buildSetupHref, type SetupFormTarget } from "./setup-target";
 
 /**
  * Shared setup form (GENERAL + BASIC_MCQ): difficulty cards, optional
  * experience band (Basic MCQ only), question count 1–50 and the Preview
  * ON/OFF toggle. Navigates with query params; every value is re-validated
  * server-side on the next screen and again at creation.
+ *
+ * `target` is plain serializable data (RSC rule: no functions may cross the
+ * server/client boundary) — see components/assessment/setup-target.ts.
  */
 export function SetupForm({
-  hrefFor,
+  target,
   showExperience,
   maxCount = GENERAL_COUNT_MAX,
   countNoun = "questions",
   showAdaptive = false,
 }: {
-  hrefFor: (p: {
-    difficulty: string;
-    experience: string;
-    count: number;
-    preview: boolean;
-    adaptive: boolean;
-  }) => string;
+  target: SetupFormTarget;
   showExperience: boolean;
   /** D-LIMITS: 1-50 for MCQ flows, 1-10 for CODING. */
   maxCount?: number;
@@ -51,8 +49,9 @@ export function SetupForm({
       return;
     }
     setError(null);
-    // Adaptive assessments start immediately (no fixed set to preview).
-    router.push(hrefFor({ difficulty, experience, count, preview: adaptive ? false : preview, adaptive }));
+    // URL is assembled from the serializable target (RSC-safe); adaptive
+    // starts are handled inside buildSetupHref (preview forced off).
+    router.push(buildSetupHref(target, { difficulty, experience, count, preview, adaptive }));
   };
 
   return (

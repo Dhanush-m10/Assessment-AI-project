@@ -94,9 +94,7 @@ export default async function AreaSetupPage({
             <div className="mt-6">
               <SetupForm
                 showExperience={false}
-                hrefFor={(p) =>
-                  `/assessments/${area.id}/preview?difficulty=${p.difficulty}&count=${p.count}&preview=${p.preview ? "on" : "off"}`
-                }
+                target={{ kind: "preview", base: `/assessments/${area.id}` }}
               />
             </div>
           )}
