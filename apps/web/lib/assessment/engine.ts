@@ -219,16 +219,23 @@ export type QuotaSelection = {
  * skill order is supplied by the caller (tier order: user-selected, JD,
  * job title). Returns fewer than `count` only when the library is exhausted
  * (controlled insufficient state upstream - never silent shortening).
+ *
+ * The per-skill queries are independent read-only lookups, so they run
+ * concurrently (Promise.all). Promise.all resolves in INPUT order, so the
+ * pools Map — and therefore the round-robin below — keeps exactly the
+ * sequential implementation's semantics (skill order + id-asc pools).
  */
 export async function selectWithQuotas(
   base: Omit<SelectionContext, "skillId" | "preferredSkillIds">,
   orderedSkillIds: string[],
   count: number,
 ): Promise<QuotaSelection> {
-  const pools = new Map<string, EligibleQuestion[]>();
-  for (const skillId of orderedSkillIds) {
-    pools.set(skillId, await selectEligibleQuestions({ ...base, skillId }));
-  }
+  const poolEntries = await Promise.all(
+    orderedSkillIds.map(async (skillId) =>
+      [skillId, await selectEligibleQuestions({ ...base, skillId })] as const,
+    ),
+  );
+  const pools = new Map(poolEntries);
   const taken = new Set<string>();
   const selected: (EligibleQuestion & { quotaSkillId: string })[] = [];
   let progressed = true;
