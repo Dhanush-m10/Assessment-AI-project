@@ -1,0 +1,367 @@
+/**
+ * Canonical CODING content expansion — DSA library for the four LIVE coding
+ * job titles (Backend, Frontend, Full Stack, Security Analyst). Pure data,
+ * same CodingSeed shape as seed-data.ts. Every LIVE question has >=1 PUBLIC
+ * and >=1 HIDDEN test case (spec §23/§24, db:check invariant). Inputs are
+ * unique within each question (the additive seeder matches by input).
+ */
+import type { CodingSeed } from "../seed-data";
+
+export const codingsExpanded: CodingSeed[] = [
+  {
+    id: "cq_anagram",
+    title: "Anagram Check",
+    difficulty: "EASY",
+    language: "javascript",
+    problem:
+      "Read a word W on line 1 and a string S on line 2. Consider only alphabetic characters, case-insensitively. Print 'true' if S is an anagram of W (same multiset of letters), otherwise 'false'.",
+    starter: "const lines = require('fs').readFileSync(0, 'utf8').trim().split('\\n');\n",
+    skills: ["JavaScript", "Algorithms"],
+    jobTitleIds: ["jt_backend", "jt_fullstack"],
+    tests: [
+      { input: "listen\nsilent", expected: "true", visibility: "PUBLIC" },
+      { input: "hello\nworld", expected: "false", visibility: "PUBLIC" },
+      { input: "Astronomer\nMoon starer", expected: "true", visibility: "HIDDEN" },
+      { input: "aab\nab", expected: "false", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_reverse_string",
+    title: "Reverse String",
+    difficulty: "EASY",
+    language: "python",
+    problem: "Read one line of text. Print the line reversed (all characters, in reverse order).",
+    starter: "import sys\ntext = sys.stdin.read().strip()\n",
+    skills: ["Python", "Algorithms"],
+    jobTitleIds: ["jt_frontend", "jt_fullstack"],
+    tests: [
+      { input: "abc", expected: "cba", visibility: "PUBLIC" },
+      { input: "racecar", expected: "racecar", visibility: "PUBLIC" },
+      { input: "a b c", expected: "c b a", visibility: "HIDDEN" },
+      { input: "ab", expected: "ba", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_missing_number",
+    title: "Missing Number",
+    difficulty: "EASY",
+    language: "javascript",
+    problem:
+      "Read an integer n on line 1, then n-1 distinct integers from the range 1..n (space-separated, arbitrary order) on line 2. Print the single missing number.",
+    starter: "const lines = require('fs').readFileSync(0, 'utf8').trim().split('\\n');\n",
+    skills: ["JavaScript", "Algorithms"],
+    jobTitleIds: ["jt_backend"],
+    tests: [
+      { input: "5\n3 1 5 2", expected: "4", visibility: "PUBLIC" },
+      { input: "3\n1 2", expected: "3", visibility: "PUBLIC" },
+      { input: "10\n2 3 4 5 6 7 8 9 10", expected: "1", visibility: "HIDDEN" },
+      { input: "4\n4 2 3", expected: "1", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_pascal_row",
+    title: "Pascal Triangle Row",
+    difficulty: "EASY",
+    language: "python",
+    problem:
+      "Read an integer n (1 <= n <= 20). Print the n-th row of Pascal's triangle (1-indexed; the top row is [1]) as space-separated integers.",
+    starter: "import sys\nn = int(sys.stdin.read().strip())\n",
+    skills: ["Python", "Algorithms"],
+    jobTitleIds: ["jt_frontend"],
+    tests: [
+      { input: "1", expected: "1", visibility: "PUBLIC" },
+      { input: "4", expected: "1 3 3 1", visibility: "PUBLIC" },
+      { input: "2", expected: "1 1", visibility: "HIDDEN" },
+      { input: "5", expected: "1 4 6 4 1", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_binary_search_idx",
+    title: "Binary Search (Index)",
+    difficulty: "MEDIUM",
+    language: "python",
+    problem:
+      "Read n on line 1, n distinct sorted integers on line 2, and a target t on line 3. Print the 0-based index of t, or -1 if it is not present.",
+    starter: "import sys\nlines = sys.stdin.read().strip().split('\\n')\n",
+    skills: ["Python", "Algorithms"],
+    jobTitleIds: ["jt_backend", "jt_security"],
+    tests: [
+      { input: "5\n1 3 5 7 9\n5", expected: "2", visibility: "PUBLIC" },
+      { input: "5\n1 3 5 7 9\n10", expected: "-1", visibility: "PUBLIC" },
+      { input: "1\n42\n42", expected: "0", visibility: "HIDDEN" },
+      { input: "6\n2 4 6 8 10 12\n8", expected: "3", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_sorted_merge",
+    title: "Merge Two Sorted Lists",
+    difficulty: "MEDIUM",
+    language: "python",
+    problem:
+      "Read n and m on line 1, n sorted integers on line 2, and m sorted integers on line 3. Print the merged sorted list as space-separated integers.",
+    starter: "import sys\nlines = sys.stdin.read().strip().split('\\n')\n",
+    skills: ["Python", "Data Structures"],
+    jobTitleIds: ["jt_backend", "jt_fullstack"],
+    tests: [
+      { input: "3 2\n1 3 5\n2 4", expected: "1 2 3 4 5", visibility: "PUBLIC" },
+      { input: "1 1\n5\n2", expected: "2 5", visibility: "PUBLIC" },
+      { input: "2 2\n1 1\n2 2", expected: "1 1 2 2", visibility: "HIDDEN" },
+      { input: "2 3\n2 4\n1 3 5", expected: "1 2 3 4 5", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_max_subarray",
+    title: "Maximum Subarray Sum",
+    difficulty: "MEDIUM",
+    language: "javascript",
+    problem:
+      "Read n on line 1 and n integers on line 2. Print the maximum sum of a non-empty contiguous subarray.",
+    starter: "const lines = require('fs').readFileSync(0, 'utf8').trim().split('\\n');\n",
+    skills: ["JavaScript", "Algorithms"],
+    jobTitleIds: ["jt_backend"],
+    tests: [
+      { input: "9\n-2 1 -3 4 -1 2 1 -5 4", expected: "6", visibility: "PUBLIC" },
+      { input: "3\n-1 -2 -3", expected: "-1", visibility: "PUBLIC" },
+      { input: "1\n5", expected: "5", visibility: "HIDDEN" },
+      { input: "6\n1 -2 3 -1 2 -1", expected: "4", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_sliding_window_max",
+    title: "Sliding Window Maximum",
+    difficulty: "HARD",
+    language: "python",
+    problem:
+      "Read n and k on line 1, then n integers on line 2. Print the maximum of each consecutive window of size k, space-separated, left to right.",
+    starter: "import sys\nlines = sys.stdin.read().strip().split('\\n')\n",
+    skills: ["Python", "Data Structures"],
+    jobTitleIds: ["jt_fullstack", "jt_security"],
+    tests: [
+      { input: "8 3\n1 3 -1 -3 5 3 6 7", expected: "3 3 5 5 6 7", visibility: "PUBLIC" },
+      { input: "4 2\n1 2 3 4", expected: "2 3 4", visibility: "PUBLIC" },
+      { input: "5 1\n5 4 3 2 1", expected: "5 4 3 2 1", visibility: "HIDDEN" },
+      { input: "3 3\n1 2 3", expected: "3", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_min_stack",
+    title: "Stack With Minimum",
+    difficulty: "MEDIUM",
+    language: "javascript",
+    problem:
+      "Read operations until end of input: 'push x' (add integer x), 'pop' (remove top), 'top' (print top value), 'min' (print current minimum). For top and min print the value, or 'empty' if the stack is empty.",
+    starter: "const fs = require('fs');\nconst ops = fs.readFileSync(0, 'utf8').trim().split('\\n');\n",
+    skills: ["JavaScript", "Data Structures"],
+    jobTitleIds: ["jt_frontend"],
+    tests: [
+      { input: "push 3\npush 1\nmin", expected: "1", visibility: "PUBLIC" },
+      { input: "top", expected: "empty", visibility: "PUBLIC" },
+      { input: "push 5\npush 2\npop\ntop\nmin", expected: "5\n5", visibility: "HIDDEN" },
+      { input: "push -1\nmin\npop\ntop", expected: "-1\nempty", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_queue_from_stacks",
+    title: "Queue From Stacks",
+    difficulty: "MEDIUM",
+    language: "python",
+    problem:
+      "Read operations until end of input: 'enqueue x' (add integer x), 'dequeue' (remove and print front), 'peek' (print front). For dequeue and peek print the value, or 'empty' if the queue is empty.",
+    starter: "import sys\nops = sys.stdin.read().strip().split('\\n')\n",
+    skills: ["Python", "Data Structures"],
+    jobTitleIds: ["jt_security"],
+    tests: [
+      { input: "enqueue 1\nenqueue 2\ndequeue", expected: "1", visibility: "PUBLIC" },
+      { input: "peek", expected: "empty", visibility: "PUBLIC" },
+      { input: "enqueue 1\ndequeue\ndequeue", expected: "1\nempty", visibility: "HIDDEN" },
+      { input: "enqueue 5\nenqueue 6\npeek\nenqueue 7\npeek", expected: "5\n5", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_linked_list_reverse",
+    title: "Reverse Linked List",
+    difficulty: "MEDIUM",
+    language: "javascript",
+    problem:
+      "Read n on line 1 and n space-separated integers (the list in order) on line 2. Print the reversed list as space-separated integers.",
+    starter: "const lines = require('fs').readFileSync(0, 'utf8').trim().split('\\n');\n",
+    skills: ["JavaScript", "Data Structures"],
+    jobTitleIds: ["jt_frontend"],
+    tests: [
+      { input: "5\n1 2 3 4 5", expected: "5 4 3 2 1", visibility: "PUBLIC" },
+      { input: "1\n9", expected: "9", visibility: "PUBLIC" },
+      { input: "3\n7 8 9", expected: "9 8 7", visibility: "HIDDEN" },
+      { input: "4\n2 4 4 2", expected: "2 4 4 2", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_linked_list_cycle",
+    title: "Linked List Cycle",
+    difficulty: "MEDIUM",
+    language: "python",
+    problem:
+      "Read n on line 1, n space-separated node values on line 2, and an integer c (-1 <= c < n) on line 3. If c >= 0, the tail node's next points to node index c (0-based). Print 'yes' if the list contains a cycle, otherwise 'no'.",
+    starter: "import sys\nlines = sys.stdin.read().strip().split('\\n')\n",
+    skills: ["Python", "Data Structures"],
+    jobTitleIds: ["jt_frontend", "jt_security"],
+    tests: [
+      { input: "3\n1 2 3\n0", expected: "yes", visibility: "PUBLIC" },
+      { input: "3\n1 2 3\n-1", expected: "no", visibility: "PUBLIC" },
+      { input: "1\n5\n0", expected: "yes", visibility: "HIDDEN" },
+      { input: "4\n1 2 3 4\n2", expected: "yes", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_tree_max_depth",
+    title: "Binary Tree Maximum Depth",
+    difficulty: "EASY",
+    language: "javascript",
+    problem:
+      "A binary tree is given in level order: read n on line 1 and n space-separated values on line 2, where -1 denotes a null node. Print the maximum depth, the number of nodes on the longest root-to-leaf path.",
+    starter: "const lines = require('fs').readFileSync(0, 'utf8').trim().split('\\n');\n",
+    skills: ["JavaScript", "Data Structures"],
+    jobTitleIds: ["jt_frontend"],
+    tests: [
+      { input: "3\n1 2 3", expected: "2", visibility: "PUBLIC" },
+      { input: "1\n1", expected: "1", visibility: "PUBLIC" },
+      { input: "7\n1 2 3 -1 -1 5 6", expected: "3", visibility: "HIDDEN" },
+      { input: "5\n1 2 -1 3 -1", expected: "3", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_tree_is_symmetric",
+    title: "Symmetric Binary Tree",
+    difficulty: "MEDIUM",
+    language: "python",
+    problem:
+      "A binary tree is given in level order: read n on line 1 and n space-separated values on line 2, where -1 denotes a null node. Print 'yes' if the tree is a mirror of itself (symmetric), otherwise 'no'.",
+    starter: "import sys\nlines = sys.stdin.read().strip().split('\\n')\n",
+    skills: ["Python", "Data Structures"],
+    jobTitleIds: ["jt_fullstack"],
+    tests: [
+      { input: "5\n1 2 2 3 4", expected: "no", visibility: "PUBLIC" },
+      { input: "3\n1 2 2", expected: "yes", visibility: "PUBLIC" },
+      { input: "7\n1 2 2 3 4 4 3", expected: "yes", visibility: "HIDDEN" },
+      { input: "1\n1", expected: "yes", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_permutations",
+    title: "Generate Permutations",
+    difficulty: "MEDIUM",
+    language: "javascript",
+    problem:
+      "Read n on line 1 and n distinct single-digit integers on line 2. Print every permutation of the sequence, one per line, space-separated, in lexicographic order of the sequences.",
+    starter: "const lines = require('fs').readFileSync(0, 'utf8').trim().split('\\n');\n",
+    skills: ["JavaScript", "Algorithms"],
+    jobTitleIds: ["jt_fullstack"],
+    tests: [
+      { input: "2\n1 2", expected: "1 2\n2 1", visibility: "PUBLIC" },
+      { input: "1\n7", expected: "7", visibility: "PUBLIC" },
+      { input: "3\n1 2 3", expected: "1 2 3\n1 3 2\n2 1 3\n2 3 1\n3 1 2\n3 2 1", visibility: "HIDDEN" },
+      { input: "3\n3 1 2", expected: "1 2 3\n1 3 2\n2 1 3\n2 3 1\n3 1 2\n3 2 1", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_coin_change",
+    title: "Coin Change (Minimum Coins)",
+    difficulty: "MEDIUM",
+    language: "python",
+    problem:
+      "Read target t on line 1 and distinct coin denominations on line 2. Using an unlimited supply of coins, print the minimum number of coins summing to t, or -1 if impossible. (t can be 0.)",
+    starter: "import sys\nlines = sys.stdin.read().strip().split('\\n')\n",
+    skills: ["Python", "Algorithms"],
+    jobTitleIds: ["jt_backend", "jt_security"],
+    tests: [
+      { input: "11\n1 2 5", expected: "3", visibility: "PUBLIC" },
+      { input: "3\n2", expected: "-1", visibility: "PUBLIC" },
+      { input: "0\n1 5", expected: "0", visibility: "HIDDEN" },
+      { input: "12\n3 4", expected: "3", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_house_robber",
+    title: "House Robber",
+    difficulty: "MEDIUM",
+    language: "javascript",
+    problem:
+      "Read n on line 1 and n space-separated house values on line 2. You may rob any houses except two adjacent ones. Print the maximum total you can rob.",
+    starter: "const lines = require('fs').readFileSync(0, 'utf8').trim().split('\\n');\n",
+    skills: ["JavaScript", "Algorithms"],
+    jobTitleIds: ["jt_fullstack"],
+    tests: [
+      { input: "4\n3 2 7 9", expected: "12", visibility: "PUBLIC" },
+      { input: "1\n5", expected: "5", visibility: "PUBLIC" },
+      { input: "3\n2 7 9", expected: "11", visibility: "HIDDEN" },
+      { input: "5\n2 1 1 2 3", expected: "6", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_lis_length",
+    title: "Longest Increasing Subsequence",
+    difficulty: "HARD",
+    language: "python",
+    problem:
+      "Read n on line 1 and n distinct integers on line 2. Print the length of the longest strictly increasing subsequence.",
+    starter: "import sys\nlines = sys.stdin.read().strip().split('\\n')\n",
+    skills: ["Python", "Algorithms"],
+    jobTitleIds: ["jt_security"],
+    tests: [
+      { input: "6\n10 9 2 5 3 7", expected: "3", visibility: "PUBLIC" },
+      { input: "3\n3 2 1", expected: "1", visibility: "PUBLIC" },
+      { input: "1\n4", expected: "1", visibility: "HIDDEN" },
+      { input: "8\n1 3 5 2 4 6 8 7", expected: "5", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_sort_colors",
+    title: "Sort Colors",
+    difficulty: "MEDIUM",
+    language: "javascript",
+    problem:
+      "Read n on line 1 and n space-separated integers on line 2, each 0, 1 or 2. Print them sorted in ascending order, space-separated.",
+    starter: "const lines = require('fs').readFileSync(0, 'utf8').trim().split('\\n');\n",
+    skills: ["JavaScript", "Algorithms"],
+    jobTitleIds: ["jt_frontend"],
+    tests: [
+      { input: "6\n2 0 2 1 1 0", expected: "0 0 1 1 2 2", visibility: "PUBLIC" },
+      { input: "1\n1", expected: "1", visibility: "PUBLIC" },
+      { input: "4\n2 2 2 0", expected: "0 2 2 2", visibility: "HIDDEN" },
+      { input: "5\n0 0 0 0 0", expected: "0 0 0 0 0", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_search_rotated",
+    title: "Search in Rotated Sorted Array",
+    difficulty: "HARD",
+    language: "python",
+    problem:
+      "Read n on line 1, n distinct integers (a strictly increasing sequence rotated by an unknown amount) on line 2, and a target t on line 3. Print the 0-based index of t, or -1 if absent.",
+    starter: "import sys\nlines = sys.stdin.read().strip().split('\\n')\n",
+    skills: ["Python", "Algorithms"],
+    jobTitleIds: ["jt_backend"],
+    tests: [
+      { input: "5\n3 4 5 1 2\n1", expected: "3", visibility: "PUBLIC" },
+      { input: "5\n3 4 5 1 2\n6", expected: "-1", visibility: "PUBLIC" },
+      { input: "3\n5 1 3\n5", expected: "0", visibility: "HIDDEN" },
+      { input: "6\n6 7 8 1 2 3\n8", expected: "2", visibility: "HIDDEN" },
+    ],
+  },
+  {
+    id: "cq_pair_sum_sorted",
+    title: "Two Sum in Sorted Array",
+    difficulty: "MEDIUM",
+    language: "javascript",
+    problem:
+      "Read n on line 1, n sorted distinct integers on line 2, and a target t on line 3. Print the two 0-based indices (i j with i < j) whose values sum to t, space-separated; the pair is unique if it exists. Print -1 if no pair sums to t.",
+    starter: "const lines = require('fs').readFileSync(0, 'utf8').trim().split('\\n');\n",
+    skills: ["JavaScript", "Algorithms"],
+    jobTitleIds: ["jt_backend", "jt_fullstack"],
+    tests: [
+      { input: "4\n1 2 4 7\n9", expected: "0 3", visibility: "PUBLIC" },
+      { input: "3\n1 2 4\n10", expected: "-1", visibility: "PUBLIC" },
+      { input: "5\n2 3 5 7 11\n14", expected: "1 4", visibility: "HIDDEN" },
+      { input: "2\n-5 5\n0", expected: "0 1", visibility: "HIDDEN" },
+    ],
+  },
+];

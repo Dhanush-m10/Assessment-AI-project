@@ -24,6 +24,15 @@ import type {
   PublishStatus,
   TestCaseVisibility,
 } from "@prisma/client";
+import { generalMcqsPart1 } from "./data/general-mcq";
+import { generalMcqsPart2 } from "./data/general-mcq-2";
+import { generalMcqsPart3 } from "./data/general-mcq-3";
+import { roleMcqsPart1 } from "./data/role-mcq-1";
+import { roleMcqsPart2 } from "./data/role-mcq-2";
+import { skillMcqsPart1 } from "./data/skill-mcq-1";
+import { skillMcqsPart2 } from "./data/skill-mcq-2";
+import { skillMcqsPart3 } from "./data/skill-mcq-3";
+import { codingsExpanded } from "./data/coding";
 
 export const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 export const slug = (s: string) =>
@@ -222,6 +231,15 @@ export const mcqs: McqSeed[] = [
   { id: "q_react_1", text: "Which hook returns a memoized value in React?", difficulty: "EASY", flow: "BASIC_SKILLS_MCQ", jobTitleId: "jt_frontend", skills: ["React", "JavaScript"], options: [{ text: "useMemo", correct: true }, { text: "useEffect" }, { text: "useRef" }, { text: "useState" }] },
   { id: "q_docker_1", text: "What does a Dockerfile layer cache speed up?", difficulty: "MEDIUM", flow: "CODING", jobTitleId: "jt_backend", skills: ["Docker"], options: [{ text: "Rebuilds when earlier layers are unchanged", correct: true }, { text: "Network latency" }, { text: "Container runtime memory" }, { text: "Image signing" }] },
   { id: "q_git_1", text: "Which command re-applies a commit from another branch as a new commit?", difficulty: "MEDIUM", flow: "CODING", jobTitleId: "jt_fullstack", skills: ["Git"], options: [{ text: "git cherry-pick", correct: true }, { text: "git rebase --abort" }, { text: "git reset --hard" }, { text: "git stash" }] },
+  // --- Phase 3 content expansion (pure data modules under prisma/data) ---
+  ...generalMcqsPart1,
+  ...generalMcqsPart2,
+  ...generalMcqsPart3,
+  ...roleMcqsPart1,
+  ...roleMcqsPart2,
+  ...skillMcqsPart1,
+  ...skillMcqsPart2,
+  ...skillMcqsPart3,
 ];
 
 export type CodingSeed = {
@@ -305,4 +323,6 @@ export const codings: CodingSeed[] = [
       { input: "3\n1 2 3\n4 5 6\n7 8 9", expected: "7 4 1\n8 5 2\n9 6 3", visibility: "HIDDEN" },
     ],
   },
+  // --- Phase 3 content expansion (DSA library, >=1 PUBLIC + >=1 HIDDEN each) ---
+  ...codingsExpanded,
 ];
