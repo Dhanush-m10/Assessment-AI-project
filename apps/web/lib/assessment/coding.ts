@@ -277,11 +277,28 @@ export type CodingSubmitResult =
   | { ok: false; reason: "already-completed"; assessmentId: string };
 
 /**
+ * Internal marker (never surfaces to callers): the conditional finalization
+ * matched 0 rows because a concurrent submission completed the assessment
+ * first. Thrown inside the interactive transaction so the whole tx rolls
+ * back, then mapped to the existing already-completed/not-open results.
+ */
+class FinalizedElsewhereError extends Error {}
+
+/**
  * Authoritative final submission for CODING (mirrors submitMcqAssessment,
  * D-SCORE: 1 point per correct challenge). Per-question correctness was fixed
  * server-side at Submit Code time; this transaction aggregates scores, feeds
  * the A3 30-day history (codingQuestionId side) and completes the assessment.
- * Double submit is idempotent.
+ *
+ * F4: the transaction writes are batched by group (same constant statement
+ * count for any N) with unchanged semantics: correct -> lastAnsweredAt AND
+ * lastCorrectAt = now; incorrect -> lastAnsweredAt = now only (a previous
+ * lastCorrectAt is never cleared).
+ *
+ * Double submit is idempotent and exactly-once: the final update is
+ * conditioned on status = IN_PROGRESS, so a concurrent double-submit cannot
+ * overwrite the final state; the losing request rolls back and reports
+ * already-completed.
  */
 export async function submitCodingAssessment(
   userId: string,
@@ -335,43 +352,114 @@ export async function submitCodingAssessment(
   const correctCount = scored.filter((s) => s.correct).length;
   const percentage = (correctCount / questions.length) * 100;
 
-  await db.$transaction(async (tx: Prisma.TransactionClient) => {
-    for (const s of scored) {
-      await tx.userAnswer.update({
-        where: { id: s.answer.id },
-        data: { isCorrect: s.correct, score: s.correct ? 1 : 0 },
-      });
-      if (s.question.codingQuestionId) {
-        await tx.userQuestionHistory.upsert({
-          where: {
-            userId_codingQuestionId: {
-              userId,
-              codingQuestionId: s.question.codingQuestionId,
-            },
-          },
-          create: {
-            userId,
-            codingQuestionId: s.question.codingQuestionId,
-            lastAnsweredAt: now,
-            lastCorrectAt: s.correct ? now : null,
-          },
-          update: {
-            lastAnsweredAt: now,
-            ...(s.correct ? { lastCorrectAt: now } : {}),
-          },
+  // F4 batching (mirrors submitMcqAssessment): group the per-question writes
+  // by identical data so any challenge count costs the same constant number
+  // of statements, all inside one interactive transaction.
+  const correctAnswerIds: string[] = [];
+  const incorrectAnswerIds: string[] = [];
+  const historyEntries: { codingQuestionId: string; correct: boolean }[] = [];
+  for (const s of scored) {
+    (s.correct ? correctAnswerIds : incorrectAnswerIds).push(s.answer.id);
+    if (s.question.codingQuestionId) {
+      historyEntries.push({ codingQuestionId: s.question.codingQuestionId, correct: s.correct });
+    }
+  }
+
+  try {
+    await db.$transaction(async (tx: Prisma.TransactionClient) => {
+      // Existing history rows must be read INSIDE the transaction to
+      // preserve the race-safety of the previous per-question upserts.
+      const existing: { codingQuestionId: string | null }[] =
+        historyEntries.length > 0
+          ? await tx.userQuestionHistory.findMany({
+              where: { userId, codingQuestionId: { in: historyEntries.map((e) => e.codingQuestionId) } },
+              select: { codingQuestionId: true },
+            })
+          : [];
+      const existingIds = new Set(existing.map((h) => h.codingQuestionId as string));
+
+      if (correctAnswerIds.length > 0) {
+        await tx.userAnswer.updateMany({
+          where: { id: { in: correctAnswerIds } },
+          data: { isCorrect: true, score: 1 },
         });
       }
-    }
-    await tx.assessment.update({
-      where: { id: assessment.id },
-      data: {
-        status: "COMPLETED",
-        finalScore: correctCount,
-        finalPercentage: percentage,
-        completedAt: now,
-      },
+      if (incorrectAnswerIds.length > 0) {
+        await tx.userAnswer.updateMany({
+          where: { id: { in: incorrectAnswerIds } },
+          data: { isCorrect: false, score: 0 },
+        });
+      }
+
+      // New history rows (deduped). skipDuplicates keeps double-submit
+      // safety if a concurrent finalization inserted the same row first.
+      const seenCreate = new Set<string>();
+      const toCreate = historyEntries.filter((e) => {
+        if (existingIds.has(e.codingQuestionId) || seenCreate.has(e.codingQuestionId)) return false;
+        seenCreate.add(e.codingQuestionId);
+        return true;
+      });
+      if (toCreate.length > 0) {
+        await tx.userQuestionHistory.createMany({
+          data: toCreate.map((e) => ({
+            userId,
+            codingQuestionId: e.codingQuestionId,
+            lastAnsweredAt: now,
+            lastCorrectAt: e.correct ? now : null,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      // Existing rows answered correctly NOW: advance both timestamps.
+      const existingCorrect = historyEntries
+        .filter((e) => e.correct && existingIds.has(e.codingQuestionId))
+        .map((e) => e.codingQuestionId);
+      if (existingCorrect.length > 0) {
+        await tx.userQuestionHistory.updateMany({
+          where: { userId, codingQuestionId: { in: existingCorrect } },
+          data: { lastAnsweredAt: now, lastCorrectAt: now },
+        });
+      }
+      // Existing rows answered incorrectly NOW: touch lastAnsweredAt only —
+      // a previous lastCorrectAt is deliberately preserved (30-day window).
+      const existingIncorrect = historyEntries
+        .filter((e) => !e.correct && existingIds.has(e.codingQuestionId))
+        .map((e) => e.codingQuestionId);
+      if (existingIncorrect.length > 0) {
+        await tx.userQuestionHistory.updateMany({
+          where: { userId, codingQuestionId: { in: existingIncorrect } },
+          data: { lastAnsweredAt: now },
+        });
+      }
+
+      // Exactly-once finalization (see submitMcqAssessment).
+      const finalized = await tx.assessment.updateMany({
+        where: { id: assessment.id, status: "IN_PROGRESS" },
+        data: {
+          status: "COMPLETED",
+          finalScore: correctCount,
+          finalPercentage: percentage,
+          completedAt: now,
+        },
+      });
+      if (finalized.count !== 1) throw new FinalizedElsewhereError();
     });
-  });
+  } catch (e) {
+    if (e instanceof FinalizedElsewhereError) {
+      // A concurrent submission won the race; our writes rolled back with
+      // the transaction, so the winner's final state is untouched.
+      const current = (await db.assessment.findFirst({
+        where: { id: assessmentId, userId },
+        select: { status: true },
+      })) as { status: string } | null;
+      if (current?.status === "COMPLETED") {
+        return { ok: false, reason: "already-completed", assessmentId: assessment.id };
+      }
+      return { ok: false, reason: "not-open" };
+    }
+    throw e;
+  }
 
   return { ok: true, assessmentId: assessment.id, correct: correctCount, total: questions.length };
 }
