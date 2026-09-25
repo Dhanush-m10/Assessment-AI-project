@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   DIFFICULTIES_META,
@@ -42,16 +42,37 @@ export function SetupForm({
   const [preview, setPreview] = useState(false);
   const [adaptive, setAdaptive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Idempotency key: generated ONCE per form instance (same pattern as
+  // StartForm/JdForm) and shared with the creation step for GENERAL, so a
+  // double "Continue" click replays the same assessment instead of creating
+  // a second one (unique clientRequestId index).
+  const [requestId, setRequestId] = useState("");
+  const [navigating, setNavigating] = useState(false);
+
+  useEffect(() => {
+    setRequestId(crypto.randomUUID());
+  }, []);
 
   const go = () => {
+    if (navigating || !requestId) return;
     if (!Number.isInteger(count) || count < GENERAL_COUNT_MIN || count > maxCount) {
       setError(`${countNoun === "questions" ? "Question" : "Challenge"} count must be between ${GENERAL_COUNT_MIN} and ${maxCount}.`);
       return;
     }
     setError(null);
+    setNavigating(true);
     // URL is assembled from the serializable target (RSC-safe); adaptive
     // starts are handled inside buildSetupHref (preview forced off).
-    router.push(buildSetupHref(target, { difficulty, experience, count, preview, adaptive }));
+    router.push(
+      buildSetupHref(target, {
+        difficulty,
+        experience,
+        count,
+        preview,
+        adaptive,
+        clientRequestId: target.kind === "preview" ? requestId : undefined,
+      }),
+    );
   };
 
   return (
@@ -226,9 +247,10 @@ export function SetupForm({
       <button
         type="button"
         onClick={go}
-        className="rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-600/40 focus:ring-offset-2"
+        disabled={navigating || !requestId}
+        className="rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-600/40 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        Continue
+        {navigating ? "Continuing…" : "Continue"}
       </button>
     </div>
   );

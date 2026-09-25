@@ -13,21 +13,26 @@ export function StartForm({
   areaId,
   difficulty,
   count,
+  preview,
+  clientRequestId,
 }: {
   areaId: string;
   difficulty: string;
   count: number;
   preview: boolean;
+  /** Idempotency key threaded from the setup step; when absent one is
+   *  generated here (unchanged standalone behavior). */
+  clientRequestId?: string;
 }) {
   const [state, formAction] = useActionState(startGeneralAssessment, {});
   const [pending, setPending] = useState(false);
-  const [requestId, setRequestId] = useState("");
+  const [requestId, setRequestId] = useState(clientRequestId ?? "");
   const actionRef = useRef(formAction);
   actionRef.current = formAction;
 
   useEffect(() => {
-    setRequestId(crypto.randomUUID());
-  }, []);
+    if (!clientRequestId) setRequestId(crypto.randomUUID());
+  }, [clientRequestId]);
 
   return (
     <form
@@ -40,6 +45,7 @@ export function StartForm({
       <input type="hidden" name="areaId" value={areaId} />
       <input type="hidden" name="difficulty" value={difficulty} />
       <input type="hidden" name="count" value={String(count)} />
+      <input type="hidden" name="preview" value={preview ? "on" : "off"} />
       <input type="hidden" name="clientRequestId" value={requestId} />
 
       {state.error && (

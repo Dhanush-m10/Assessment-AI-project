@@ -1,7 +1,13 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getPrisma } from "@/lib/prisma";
-import { parseCount, parseDifficulty, selectEligibleQuestions } from "@/lib/assessment/general";
+import {
+  createGeneralAssessment,
+  parseClientRequestId,
+  parseCount,
+  parseDifficulty,
+  selectEligibleQuestions,
+} from "@/lib/assessment/general";
 import { requireUser } from "@/lib/auth/require-user";
 import { Card, EmptyState } from "@/components/ui/card";
 import { StartForm } from "@/components/assessment/start-form";
@@ -13,17 +19,25 @@ export const metadata = { title: "Preview Assessment · Assessment AI" };
 
 /**
  * Preview/confirm step. Reads config from searchParams and RE-VALIDATES it
- * server-side (difficulty enum, 1–50 count, LIVE General area). Shows the
- * eligible pool size so an insufficient library is surfaced BEFORE creation.
- * No Assessment row exists until Start is pressed, so refreshing preview can
- * never create duplicates (idempotency at creation is clientRequestId).
+ * server-side (difficulty enum, 1–50 count, LIVE General area).
+ *
+ * Preview ON shows the eligible pool size so an insufficient library is
+ * surfaced BEFORE creation. Preview OFF skips this review step entirely: the
+ * page creates the assessment immediately through the existing creation
+ * engine (which is authoritative for area validation, eligibility, question
+ * selection and the insufficient state) and redirects to the taking screen,
+ * so the user never sees a preview UI when Preview is OFF. Idempotency is the
+ * setup step's clientRequestId (unique index): double-clicks and refreshes
+ * replay the same assessment, never duplicates. Preview ON keeps the review:
+ * the Assessment row is only created when Start is pressed, with the same
+ * clientRequestId.
  */
 export default async function PreviewPage({
   params,
   searchParams,
 }: {
   params: Promise<{ areaId: string }>;
-  searchParams: Promise<{ difficulty?: string; count?: string; preview?: string }>;
+  searchParams: Promise<{ difficulty?: string; count?: string; preview?: string; clientRequestId?: string }>;
 }) {
   const { areaId } = await params;
   const sp = await searchParams;
@@ -32,11 +46,15 @@ export default async function PreviewPage({
   const difficulty = parseDifficulty(sp.difficulty ?? "");
   const count = parseCount(sp.count ?? "");
   const preview = sp.preview === "on";
+  const clientRequestId = parseClientRequestId(sp.clientRequestId ?? "") ?? crypto.randomUUID();
 
+  // Single area load for this request: validation (LIVE + GENERAL + category
+  // LIVE) for notFound, plus the immutable {id, categoryId} passed into the
+  // creation engine on the Preview-OFF path so the area is not re-queried.
   const area = (await getPrisma().areaOfInterest.findFirst({
     where: { id: areaId, status: "LIVE", classification: "GENERAL", category: { status: "LIVE" } },
-    select: { id: true, name: true, category: { select: { name: true } } },
-  })) as { id: string; name: string; category: { name: string } } | null;
+    select: { id: true, categoryId: true, name: true, category: { select: { name: true } } },
+  })) as { id: string; categoryId: string; name: string; category: { name: string } } | null;
   if (!area) notFound();
 
   if (!difficulty || count === null) {
@@ -60,8 +78,54 @@ export default async function PreviewPage({
     );
   }
 
-  const eligible = await selectEligibleQuestions({ userId: user.id, areaId: area.id, difficulty });
-  const insufficient = eligible.length < count;
+  let available = 0;
+  if (preview) {
+    // Preview ON: show the eligible pool size BEFORE creation so an
+    // insufficient library is surfaced before Start.
+    const eligible = await selectEligibleQuestions({ userId: user.id, areaId: area.id, difficulty });
+    available = eligible.length;
+  } else {
+    // Preview OFF: no review step — the creation engine is authoritative for
+    // area validation, eligibility, question selection and the insufficient
+    // state (same path, idempotency and 30-day exclusion as the action). The
+    // area was re-validated above, so its immutable {id, categoryId} is
+    // passed through — it is not queried again — and we land on the taking
+    // screen.
+    const result = await createGeneralAssessment({
+      userId: user.id,
+      areaId: area.id,
+      difficulty,
+      count,
+      clientRequestId,
+      previewEnabled: false,
+      validatedArea: { id: area.id, categoryId: area.categoryId },
+    });
+    if (result.ok) redirect(`/assessments/take/${result.assessmentId}`);
+    if (result.reason === "insufficient") {
+      // Engine's authoritative pool size — drives the message below.
+      available = result.available;
+    } else {
+      return (
+        <div className="mx-auto max-w-2xl">
+          <Card className="p-8">
+            <EmptyState
+              title="This assessment area is not available"
+              message="Please pick another area from the catalogue."
+              action={
+                <Link
+                  href={`/assessments/${area.id}`}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  Back to setup <IconArrowRight className="h-4 w-4" />
+                </Link>
+              }
+            />
+          </Card>
+        </div>
+      );
+    }
+  }
+  const insufficient = available < count;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -73,11 +137,12 @@ export default async function PreviewPage({
       </Link>
       <Card className="p-8">
         <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">
-          Preview your assessment
+          {preview ? "Preview your assessment" : "Review your configuration"}
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Check the configuration, then start. Questions are drawn from the live library at
-          submit-safe difficulty; recently mastered questions are rotated out automatically.
+          {preview
+            ? "Check the configuration, then start. Questions are drawn from the live library at submit-safe difficulty; recently mastered questions are rotated out automatically."
+            : "Questions are drawn from the live library at submit-safe difficulty; recently mastered questions are rotated out automatically."}
         </p>
 
         <dl className="mt-6 divide-y divide-slate-100 rounded-xl border border-slate-200">
@@ -100,7 +165,7 @@ export default async function PreviewPage({
           <EmptyState
             className="mt-6"
             title="Not enough eligible library questions"
-            message={`Only ${eligible.length} live question${eligible.length === 1 ? "" : "s"} match this configuration after the 30-day rotation rule. AI gap-fill generation arrives in the AI phase — for now, lower the question count or change difficulty.`}
+            message={`Only ${available} live question${available === 1 ? "" : "s"} match this configuration after the 30-day rotation rule. AI gap-fill generation arrives in the AI phase — for now, lower the question count or change difficulty.`}
             action={
               <Link
                 href={`/assessments/${area.id}`}
@@ -112,7 +177,13 @@ export default async function PreviewPage({
           />
         ) : (
           <div className="mt-6">
-            <StartForm areaId={area.id} difficulty={difficulty} count={count} preview={preview} />
+            <StartForm
+              areaId={area.id}
+              difficulty={difficulty}
+              count={count}
+              preview={preview}
+              clientRequestId={clientRequestId}
+            />
           </div>
         )}
       </Card>
