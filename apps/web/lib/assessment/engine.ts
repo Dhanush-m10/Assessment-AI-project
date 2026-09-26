@@ -15,6 +15,14 @@ import type {
   DifficultyValue,
   ExperienceBandValue,
 } from "@/lib/assessment/limits";
+import {
+  computeSkillGaps,
+  fillCodingGap,
+  fillPlainMcqGap,
+  fillQuotaGaps,
+  resolveCodingLanguage,
+} from "@/lib/assessment/ai-gapfill";
+import { normalizeText } from "@/lib/assessment/generation";
 
 /**
  * Shared MCQ assessment engine (Phase 5).
@@ -325,19 +333,46 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
       })) as { id: string } | null);
   if (!area) return { ok: false, reason: "invalid-area" };
 
-  let selected: (EligibleQuestion & { quotaSkillId: string | null })[];
-  let codingSelected: EligibleCodingQuestion[] = [];
+  // `aiGenerated` marks ephemeral AI gap-fill items (Phase 3D): persisted as
+  // AssessmentQuestion rows only (source AI_GENERATED / AI_CODING_GENERATED,
+  // libraryQuestionId/codingQuestionId null), never as library rows.
+  let selected: (EligibleQuestion & { quotaSkillId: string | null; aiGenerated?: boolean })[];
+  let codingSelected: (EligibleCodingQuestion & { aiGenerated?: boolean })[] = [];
+  // AI gap-fill (Phase 3D): runs ONLY when the library is short, requests
+  // exactly the missing count, and happens BEFORE the persistence
+  // transaction. Every failure path returns the existing controlled
+  // `insufficient` result — never a partial assessment, never a crash.
   if (args.flow === "CODING") {
-    codingSelected = await selectEligibleCodingQuestions({
+    const pool = await selectEligibleCodingQuestions({
       userId: args.selection.userId,
       difficulty: args.selection.difficulty,
       jobTitleId: args.selection.jobTitleId ?? "",
       preferredSkillIds: args.selection.preferredSkillIds,
     });
-    if (codingSelected.length < args.count) {
-      return { ok: false, reason: "insufficient", available: codingSelected.length };
+    if (pool.length < args.count) {
+      const language = await resolveCodingLanguage({
+        selectedLanguages: pool.map((q) => q.language),
+        jobTitleId: args.selection.jobTitleId ?? "",
+      });
+      const generated =
+        language !== null
+          ? await fillCodingGap({
+              difficulty: args.selection.difficulty,
+              gap: args.count - pool.length,
+              jobTitleId: args.selection.jobTitleId ?? "",
+              language,
+            })
+          : null;
+      if (!generated) {
+        return { ok: false, reason: "insufficient", available: pool.length };
+      }
+      codingSelected = [
+        ...pool.map((q) => ({ ...q })),
+        ...generated.map((q) => ({ ...q, aiGenerated: true })),
+      ];
+    } else {
+      codingSelected = pool.slice(0, args.count).map((q) => ({ ...q }));
     }
-    codingSelected = codingSelected.slice(0, args.count);
     selected = [];
   } else if (args.quotaSkills?.length) {
     const quota = await selectWithQuotas(
@@ -352,15 +387,62 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
       args.count,
     );
     if (quota.selected.length < args.count) {
-      return { ok: false, reason: "insufficient", available: quota.available };
+      // Per-skill gaps against the D-DIST even split (one AI request per
+      // missing skill quota, V1). The LIVE pool's normalized texts are
+      // fetched ONCE here and reused by every batch (no redundant queries).
+      const gaps = computeSkillGaps({
+        count: args.count,
+        orderedSkillIds: args.quotaSkills,
+        allocatedBySkill: quota.selected.reduce<Map<string, number>>((acc, q) => {
+          acc.set(q.quotaSkillId, (acc.get(q.quotaSkillId) ?? 0) + 1);
+          return acc;
+        }, new Map()),
+      });
+      const poolTexts = (await db.question.findMany({
+        where: {
+          status: "LIVE",
+          assessmentFlow: args.selection.flow,
+          difficulty: args.selection.difficulty,
+          jobTitles: { some: { jobTitleId: args.selection.jobTitleId } },
+        },
+        select: { questionText: true },
+      })) as { questionText: string }[];
+      const generated = await fillQuotaGaps({
+        difficulty: args.selection.difficulty,
+        jobTitleId: args.selection.jobTitleId ?? "",
+        gaps,
+        existingNormalizedTexts: poolTexts.map((r) => normalizeText(r.questionText)),
+      });
+      if (!generated) {
+        return { ok: false, reason: "insufficient", available: quota.available };
+      }
+      selected = [
+        ...quota.selected,
+        ...generated.map((q) => ({ ...q, aiGenerated: true })),
+      ];
+    } else {
+      selected = quota.selected;
     }
-    selected = quota.selected;
   } else {
     const eligible = await selectEligibleQuestions(args.selection);
     if (eligible.length < args.count) {
-      return { ok: false, reason: "insufficient", available: eligible.length };
+      const generated = await fillPlainMcqGap({
+        flow: args.selection.flow,
+        difficulty: args.selection.difficulty,
+        gap: args.count - eligible.length,
+        areaId: args.selection.areaId ?? null,
+        jobTitleId: args.selection.jobTitleId ?? null,
+      });
+      if (!generated) {
+        return { ok: false, reason: "insufficient", available: eligible.length };
+      }
+      selected = [
+        ...eligible.slice(0, args.count).map((q) => ({ ...q, quotaSkillId: null })),
+        ...generated.map((q) => ({ ...q, quotaSkillId: null, aiGenerated: true })),
+      ];
+    } else {
+      selected = eligible.slice(0, args.count).map((q) => ({ ...q, quotaSkillId: null }));
     }
-    selected = eligible.slice(0, args.count).map((q) => ({ ...q, quotaSkillId: null }));
   }
   const initialStatus = args.previewEnabled ? "PREVIEW" : "IN_PROGRESS";
 
@@ -388,35 +470,75 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
       },
       select: { id: true },
     });
-    await tx.assessmentQuestion.createMany({
-      data:
-        args.flow === "CODING"
-          ? codingSelected.map((q, i) => ({
-              assessmentId: assessment.id,
-              sequence: i + 1,
-              source: "CODING_LIBRARY" as const,
-              libraryQuestionId: null,
-              codingQuestionId: q.id,
-              // Coding V1 has no per-skill quotas (A4 attribution is a
-              // quota concept); priority skills live in AssessmentSkill.
-              skillId: null,
-              questionSnapshot: buildCodingSnapshot(q),
-            }))
-          : selected.map((q, i) => ({
-              assessmentId: assessment.id,
-              sequence: i + 1,
-              source: "QUESTION_LIBRARY" as const,
-              libraryQuestionId: q.id,
-              codingQuestionId: null,
-              // A4: single primary skill = the quota this question filled.
-              skillId: q.quotaSkillId,
-              questionSnapshot: buildSnapshot({
-                questionText: q.questionText,
-                options: q.options,
-                difficulty: q.difficulty,
-              }),
-            })),
-    });
+    if (args.flow === "CODING") {
+      await tx.assessmentQuestion.createMany({
+        data: codingSelected.map((q, i) => ({
+          assessmentId: assessment.id,
+          sequence: i + 1,
+          source: q.aiGenerated ? ("AI_CODING_GENERATED" as const) : ("CODING_LIBRARY" as const),
+          libraryQuestionId: null,
+          // AI coding questions are fully ephemeral: no CodingQuestion row
+          // (UserAnswer.submittedCode has no FK, so none is needed).
+          codingQuestionId: q.aiGenerated ? null : q.id,
+          // Coding V1 has no per-skill quotas (A4 attribution is a
+          // quota concept); priority skills live in AssessmentSkill.
+          skillId: null,
+          questionSnapshot: buildCodingSnapshot(q),
+        })),
+      });
+    } else {
+      // Ephemeral AI MCQ anchors (Phase 3D): UserAnswer.selectedOptionId
+      // carries an FK to QuestionOption, so an AI MCQ snapshot must
+      // reference real option rows. DRAFT Question + its options (with
+      // exactly the snapshot's ids) are created in THIS transaction; DRAFT
+      // keeps them out of selection (LIVE only) and out of the admin
+      // default view. The AssessmentQuestion row itself stays
+      // source=AI_GENERATED + libraryQuestionId=null → no 30-day history
+      // tracking (spec §52), no library attribution.
+      for (const q of selected) {
+        if (!q.aiGenerated) continue;
+        await tx.question.create({
+          data: {
+            questionText: q.questionText,
+            difficulty: q.difficulty,
+            assessmentFlow: args.selection.flow,
+            status: "DRAFT",
+            ...(args.selection.areaId
+              ? { areas: { connect: { id: args.selection.areaId } } }
+              : {}),
+            ...(args.selection.jobTitleId
+              ? { jobTitles: { connect: { id: args.selection.jobTitleId } } }
+              : {}),
+            ...(q.quotaSkillId ? { skills: { connect: { id: q.quotaSkillId } } } : {}),
+            options: {
+              create: q.options.map((o) => ({
+                id: o.id,
+                position: o.position,
+                text: o.text,
+                isCorrect: o.isCorrect,
+              })),
+            },
+          },
+        });
+      }
+      await tx.assessmentQuestion.createMany({
+        data: selected.map((q, i) => ({
+          assessmentId: assessment.id,
+          sequence: i + 1,
+          source: q.aiGenerated ? ("AI_GENERATED" as const) : ("QUESTION_LIBRARY" as const),
+          libraryQuestionId: q.aiGenerated ? null : q.id,
+          codingQuestionId: null,
+          // A4: single primary skill = the quota this question filled
+          // (AI rows carry the skillId of the quota they filled).
+          skillId: q.quotaSkillId,
+          questionSnapshot: buildSnapshot({
+            questionText: q.questionText,
+            options: q.options,
+            difficulty: q.difficulty,
+          }),
+        })),
+      });
+    }
     if (args.quotaSkills?.length) {
       await tx.assessmentSkill.createMany({
         data: args.quotaSkills.map((skillId) => ({
