@@ -24,7 +24,7 @@ from pydantic import BaseModel, ValidationError
 from .. import prompts, schemas
 from ..config import SHARED_SECRET_ENV, ConfigurationError, get_generation_settings
 from ..providers import ProviderError, ProviderTimeoutError
-from ..providers.openai_provider import OpenAIProvider
+from ..providers.gemini_provider import GeminiProvider
 import os
 
 router = APIRouter()
@@ -57,10 +57,10 @@ class _ProviderFactory(Protocol):
 
 
 # Module-level so tests can monkeypatch it; production constructs the real
-# OpenAI provider from settings (the key is read from the environment only).
-def build_provider(settings: Any) -> OpenAIProvider:
-    return OpenAIProvider(
-        api_key=settings.openai_api_key,
+# Gemini provider from settings (the key is read from the environment only).
+def build_provider(settings: Any) -> GeminiProvider:
+    return GeminiProvider(
+        api_key=settings.gemini_api_key,
         model=settings.model,
         timeout_seconds=settings.provider_timeout_seconds,
     )

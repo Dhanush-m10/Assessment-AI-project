@@ -1,6 +1,6 @@
 """Endpoint + provider tests (scenarios A-Q from the Phase 3B brief).
 
-All provider calls are mocked (tests/conftest.py). No real OpenAI calls, no
+All provider calls are mocked (tests/conftest.py). No real Gemini calls, no
 real credentials.
 """
 from __future__ import annotations
@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.providers import ProviderError, ProviderTimeoutError
-from app.providers.openai_provider import _parse_json_object
+from app.providers.gemini_provider import _parse_json_object
 from conftest import (
     API_KEY,
     CODING_BODY,
@@ -34,7 +34,7 @@ def test_a_health_works_without_any_config(client_no_secret):
     assert resp.json() == {"status": "ok", "service": "ai-service"}
 
 
-def test_a2_health_works_without_openai_key(client_no_api_key):
+def test_a2_health_works_without_gemini_key(client_no_api_key):
     resp = client_no_api_key.get("/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
@@ -298,16 +298,16 @@ def test_o_provider_failure_is_controlled_502(client, provider):
 # ------------------------------------------- P. missing provider config
 
 
-def test_p_missing_openai_key_is_controlled_503(client_no_api_key):
+def test_p_missing_gemini_key_is_controlled_503(client_no_api_key):
     resp = client_no_api_key.post(MCQ_URL, json=MCQ_BODY, headers=HEADERS)
     assert resp.status_code == 503
     body = resp.json()
     assert body["error"] == "configuration-error"
-    assert OPENAI_KEY_NOT_MENTIONED(resp.text)
+    assert GEMINI_KEY_NOT_MENTIONED(resp.text)
 
 
-def OPENAI_KEY_NOT_MENTIONED(text: str) -> bool:
-    return "OPENAI_API_KEY" not in text and API_KEY not in text
+def GEMINI_KEY_NOT_MENTIONED(text: str) -> bool:
+    return "GEMINI_API_KEY" not in text and API_KEY not in text
 
 
 # ------------------------------------------- Q. secret hygiene

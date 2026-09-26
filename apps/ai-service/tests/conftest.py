@@ -1,4 +1,4 @@
-"""Shared fixtures. The OpenAI provider is ALWAYS mocked; no test makes a
+"""Shared fixtures. The Gemini provider is ALWAYS mocked; no test makes a
 real network call or requires real credentials."""
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ from app.providers import ProviderError, ProviderTimeoutError
 import app.routes.generate as generate_module
 
 SECRET = "test-shared-secret-do-not-log"
-API_KEY = "sk-test-key-not-a-real-credential"
+API_KEY = "AIzaTESTfakekey-do-not-log"
 
 HEADERS = {"X-AI-Service-Secret": SECRET}
 WRONG_HEADERS = {"X-AI-Service-Secret": "definitely-wrong-secret"}
 
 
 def _clear_ai_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("AI_SERVICE_SHARED_SECRET", raising=False)
 
 
@@ -26,7 +26,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     """Client with full configuration (secret + API key)."""
     _clear_ai_env(monkeypatch)
     monkeypatch.setenv("AI_SERVICE_SHARED_SECRET", SECRET)
-    monkeypatch.setenv("OPENAI_API_KEY", API_KEY)
+    monkeypatch.setenv("GEMINI_API_KEY", API_KEY)
     return TestClient(app)
 
 
@@ -35,20 +35,20 @@ def client_no_secret(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     """Client where the service has no shared secret configured (health must
     still work; generation must fail closed)."""
     _clear_ai_env(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_KEY", API_KEY)
+    monkeypatch.setenv("GEMINI_API_KEY", API_KEY)
     return TestClient(app)
 
 
 @pytest.fixture
 def client_no_api_key(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """Client configured for auth but missing OPENAI_API_KEY."""
+    """Client configured for auth but missing GEMINI_API_KEY."""
     _clear_ai_env(monkeypatch)
     monkeypatch.setenv("AI_SERVICE_SHARED_SECRET", SECRET)
     return TestClient(app)
 
 
 class FakeProvider:
-    """Stands in for OpenAIProvider: returns a canned payload or raises."""
+    """Stands in for GeminiProvider: returns a canned payload or raises."""
 
     model = "fake-model"
 

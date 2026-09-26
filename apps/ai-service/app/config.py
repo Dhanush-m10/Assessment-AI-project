@@ -2,7 +2,7 @@
 
 Environment variables (server-only, never exposed to any browser/Next.js
 surface — names match docs/DECISIONS.md):
-  OPENAI_API_KEY            provider credential (the only holder is this service)
+  GEMINI_API_KEY            provider credential (the only holder is this service)
   AI_SERVICE_SHARED_SECRET  service-to-service auth for the generation routes
 
 Design notes:
@@ -17,12 +17,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
+GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
 SHARED_SECRET_ENV = "AI_SERVICE_SHARED_SECRET"
 
-# Provider default per docs/spec (OpenAI provider). A small, current, cheap
-# model is a safe default; it is a code-level constant, not a config variable.
-DEFAULT_MODEL = "gpt-4o-mini"
+# Provider default per docs/spec (Google Gemini). A small, current, cheap
+# model is a safe default; it is a code-level constant, not a config
+# variable. No preview models and no aliases — pinned model identifier.
+DEFAULT_MODEL = "gemini-2.5-flash"
 
 # Bounded provider timeout: one generation call for a full batch (<= 50 MCQ /
 # <= 10 coding) must finish well within this.
@@ -35,7 +36,7 @@ class ConfigurationError(RuntimeError):
 
 @dataclass(frozen=True)
 class GenerationSettings:
-    openai_api_key: str
+    gemini_api_key: str
     shared_secret: str
     model: str
     provider_timeout_seconds: float
@@ -50,16 +51,16 @@ def get_generation_settings() -> GenerationSettings:
     """Load generation settings; raise ConfigurationError when incomplete.
 
     Raises ConfigurationError (never an exception that carries secret
-    material) when OPENAI_API_KEY or AI_SERVICE_SHARED_SECRET is missing.
+    material) when GEMINI_API_KEY or AI_SERVICE_SHARED_SECRET is missing.
     """
-    api_key = (os.environ.get(OPENAI_API_KEY_ENV) or "").strip()
+    api_key = (os.environ.get(GEMINI_API_KEY_ENV) or "").strip()
     shared_secret = get_shared_secret()
     if not api_key:
         raise ConfigurationError("AI provider credentials are not configured.")
     if not shared_secret:
         raise ConfigurationError("AI service authentication is not configured.")
     return GenerationSettings(
-        openai_api_key=api_key,
+        gemini_api_key=api_key,
         shared_secret=shared_secret,
         model=DEFAULT_MODEL,
         provider_timeout_seconds=DEFAULT_PROVIDER_TIMEOUT_SECONDS,

@@ -28,6 +28,6 @@ def health() -> dict[str, str]:
     """Liveness probe for deployments and for apps/web.
 
     Deliberately independent of generation configuration: a missing
-    OPENAI_API_KEY must not fail this endpoint.
+    GEMINI_API_KEY must not fail this endpoint.
     """
     return {"status": "ok", "service": "ai-service"}

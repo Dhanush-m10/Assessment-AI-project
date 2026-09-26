@@ -2,7 +2,7 @@
 fastapi>=0.115.0,<1.0
 uvicorn[standard]>=0.30.0,<1.0
 pydantic>=2.7.0,<3.0
-openai>=1.55.0,<2.0
+google-genai>=2.0.0,<3.0
 
 # Test-only (dev)
 pytest>=8.0.0

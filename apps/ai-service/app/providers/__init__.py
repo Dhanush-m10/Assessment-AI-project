@@ -1,7 +1,7 @@
 """Provider abstraction.
 
-The service depends only on this interface; no OpenAI-specific detail leaks
-into routes or validation. OpenAIProvider (openai_provider.py) is the only
+The service depends only on this interface; no Gemini-specific detail leaks
+into routes or validation. GeminiProvider (gemini_provider.py) is the only
 implementation in this phase.
 """
 from __future__ import annotations
