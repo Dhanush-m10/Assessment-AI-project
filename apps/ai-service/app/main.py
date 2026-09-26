@@ -1,22 +1,33 @@
 """Assessment AI - AI / processing service (FastAPI).
 
-Phase 0 scope: application object + health check only.
-AI generation, JD processing and scoring endpoints arrive in later phases
-(see docs/DECISIONS.md for the phase plan and responsibility split:
-this service owns AI question/coding-question/JD generation and structured
-AI processing; apps/web owns auth, persistence and lifecycle).
+This service owns AI question generation (Phase 3B):
+  GET  /health          liveness (no auth)
+  POST /generate-mcq    batch MCQ generation (shared-secret auth)
+  POST /generate-coding batch coding-challenge generation (shared-secret auth)
+
+Responsibility split (docs/DECISIONS.md): this service owns AI generation and
+structured AI processing; apps/web owns auth, persistence and lifecycle, and
+validates generated questions against the live database (Phase 3C).
 """
 
 from fastapi import FastAPI
 
+from .routes.generate import router as generate_router
+
 app = FastAPI(
     title="Assessment AI - AI Service",
-    version="0.1.0",
-    description="AI question/JD generation and structured processing service.",
+    version="0.2.0",
+    description="AI question/coding-question generation and structured processing service.",
 )
+
+app.include_router(generate_router)
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    """Liveness probe for deployments and for apps/web in later phases."""
+    """Liveness probe for deployments and for apps/web.
+
+    Deliberately independent of generation configuration: a missing
+    OPENAI_API_KEY must not fail this endpoint.
+    """
     return {"status": "ok", "service": "ai-service"}
