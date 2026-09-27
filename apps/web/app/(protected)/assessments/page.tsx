@@ -1,6 +1,5 @@
 import { getLandingSections, getCodingTrack } from "@/lib/queries/candidate";
 import { AssessmentCard, type AssessmentCardData } from "@/components/ui/assessment-card";
-import { DsaCodingCard } from "@/components/ui/dsa-coding-card";
 import { Carousel } from "@/components/ui/carousel";
 import { EmptyState, SectionHeading } from "@/components/ui/card";
 import { IconPlusDashed } from "@/components/ui/icons";
@@ -11,15 +10,34 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "New Assessment · Assessment AI" };
 
 /**
- * New Assessment landing: centred hero, the featured DSA & Coding entry
- * (when live coding roles exist), then one paged carousel per LIVE category.
- * Cards are interactive (hover elevation/reveal, quick-view modal) but every
- * essential fact stays visible at rest; all metadata is real database
- * content (names, role counts, flows).
+ * New Assessment landing: centred hero, the Coding Assessments rail (DSA as
+ * a normal rail card when live coding roles exist), then one paged carousel
+ * per LIVE category. Cards are interactive (hover elevation/reveal,
+ * quick-view modal) but every essential fact stays visible at rest; all
+ * metadata is real database content (names, role counts, real languages).
  */
 export default async function AssessmentsPage() {
   const [sections, track] = await Promise.all([getLandingSections(), getCodingTrack()]);
   const coding = track.jobTitles;
+
+  const dsaCard: AssessmentCardData | null = coding.length > 0
+    ? {
+        id: "coding-dsa",
+        name: "DSA & Coding",
+        meta: track.languages.length
+          ? `${coding.length} roles · ${track.languages.join(", ")}`
+          : `${coding.length} roles`,
+        href: "/assessments/coding",
+        visual: visualKeyFor("coding"),
+        flowLabel: "CODING",
+        implemented: true,
+        details: [
+          { label: "Category", value: "Coding" },
+          { label: "Track", value: "Role-based" },
+          { label: "Flows", value: "Coding" },
+        ],
+      }
+    : null;
 
   return (
     <div className="space-y-14">
@@ -57,13 +75,17 @@ export default async function AssessmentsPage() {
         </p>
       </section>
 
-      {coding.length > 0 && (
-        <section aria-label="Your assessments" className="mx-auto w-full max-w-3xl px-4">
-          <SectionHeading>Your Assessments</SectionHeading>
-          <p className="-mt-2 text-sm text-slate-500">Choose an assessment to get started.</p>
-          <div className="mt-4">
-            <DsaCodingCard roleNames={coding.map((t) => t.name)} />
-          </div>
+      {dsaCard && (
+        <section aria-label="Coding assessments">
+          <SectionHeading>Coding Assessments</SectionHeading>
+          <Carousel>
+            {[
+              <AssessmentCard
+                key="coding-dsa"
+                data={dsaCard}
+              />,
+            ]}
+          </Carousel>
         </section>
       )}
 
@@ -74,51 +96,48 @@ export default async function AssessmentsPage() {
           message="Assessment areas appear here as soon as an administrator publishes them."
         />
       ) : (
-        <>
-          {coding.length > 0 && <SectionHeading>Other Assessments</SectionHeading>}
-          {sections.map((section) => (
-            <section key={section.categoryId} aria-label={section.title}>
-              <SectionHeading>{section.title}</SectionHeading>
-              <Carousel>
-                {section.areas.map((area) => {
-                  const data: AssessmentCardData = {
-                    id: area.id,
-                    name: area.name,
-                    meta: area.meta,
-                    href: `/assessments/${area.id}`,
-                    visual: visualKeyFor(section.categorySlug),
-                    flowLabel: area.classification === "GENERAL" ? "GENERAL" : "ROLE_BASED",
-                    implemented: true,
-                    details: [
-                      { label: "Category", value: section.title.replace(" Assessments", "") },
-                      { label: "Track", value: area.classification === "GENERAL" ? "General" : "Role-based" },
-                      {
-                        label: "Flows",
-                        value:
-                          area.classification === "GENERAL"
-                            ? "General MCQ"
-                            : area.flows.length
-                              ? area.flows
-                                  .map((f) =>
-                                    f === "BASIC_MCQ"
-                                      ? "Basic MCQ"
-                                      : f === "BASIC_SKILLS_MCQ"
-                                        ? "Basic + Skills"
-                                        : f === "CODING"
-                                          ? "Coding"
-                                          : f,
-                                  )
-                                  .join(", ")
-                              : "No live roles yet",
-                      },
-                    ],
-                  };
-                  return <AssessmentCard key={area.id} data={data} />;
-                })}
-              </Carousel>
-            </section>
-          ))}
-        </>
+        sections.map((section) => (
+          <section key={section.categoryId} aria-label={section.title}>
+            <SectionHeading>{section.title}</SectionHeading>
+            <Carousel>
+              {section.areas.map((area) => {
+                const data: AssessmentCardData = {
+                  id: area.id,
+                  name: area.name,
+                  meta: area.meta,
+                  href: `/assessments/${area.id}`,
+                  visual: visualKeyFor(section.categorySlug),
+                  flowLabel: area.classification === "GENERAL" ? "GENERAL" : "ROLE_BASED",
+                  implemented: true,
+                  details: [
+                    { label: "Category", value: section.title.replace(" Assessments", "") },
+                    { label: "Track", value: area.classification === "GENERAL" ? "General" : "Role-based" },
+                    {
+                      label: "Flows",
+                      value:
+                        area.classification === "GENERAL"
+                          ? "General MCQ"
+                          : area.flows.length
+                            ? area.flows
+                                .map((f) =>
+                                  f === "BASIC_MCQ"
+                                    ? "Basic MCQ"
+                                    : f === "BASIC_SKILLS_MCQ"
+                                      ? "Basic + Skills"
+                                      : f === "CODING"
+                                        ? "Coding"
+                                        : f,
+                                )
+                                .join(", ")
+                            : "No live roles yet",
+                    },
+                  ],
+                };
+                return <AssessmentCard key={area.id} data={data} />;
+              })}
+            </Carousel>
+          </section>
+        ))
       )}
     </div>
   );

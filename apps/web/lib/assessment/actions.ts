@@ -14,8 +14,10 @@ import {
   createAdaptiveAssessment,
   createRoleAssessment,
   parseExperience,
+  validateRoleContext,
   type JdChoice,
 } from "@/lib/assessment/basic-mcq";
+import { parseCodingCount } from "@/lib/assessment/limits";
 import { answerAdaptiveQuestion, type AdaptiveTakingData } from "@/lib/assessment/adaptive";
 import { replaceQuestion, startFromPreview } from "@/lib/assessment/engine";
 import {
@@ -132,6 +134,75 @@ export async function startBasicMcqAssessment(
   const result = adaptive
     ? await createAdaptiveAssessment(createArgs)
     : await createRoleAssessment(createArgs);
+
+  if (!result.ok) {
+    if (result.reason === "insufficient") {
+      return { error: INSUFFICIENT_MSG, available: result.available };
+    }
+    if (result.reason === "invalid-jd" || result.reason === "invalid-config") {
+      return { error: result.message };
+    }
+    if (result.reason === "unsupported-flow") {
+      return { error: "This job title runs a flow that is not available yet." };
+    }
+    return {
+      error:
+        "This job title or area is not available for this assessment flow. Please choose another.",
+    };
+  }
+  redirect(
+    result.status === "PREVIEW"
+      ? `/assessments/preview/${result.assessmentId}`
+      : `/assessments/take/${result.assessmentId}`,
+  );
+}
+
+/**
+ * CODING creation — the coding chain has no JD step (Setup -> Skills ->
+ * create). Flow is re-validated server-side: only CODING job titles may use
+ * this action, so an MCQ title can never be created without a JD through it.
+ * Chosen skills prioritise challenge selection; the rest is library-driven.
+ */
+export async function startCodingAssessment(
+  _prev: StartState,
+  formData: FormData,
+): Promise<StartState> {
+  const user = await requireUser();
+
+  const areaId = String(formData.get("areaId") ?? "");
+  const jobTitleId = String(formData.get("jobTitleId") ?? "");
+  const difficulty = parseDifficulty(String(formData.get("difficulty") ?? ""));
+  const experience = parseExperience(String(formData.get("experience") ?? ""));
+  const count = parseCodingCount(String(formData.get("count") ?? ""));
+  const previewEnabled = formData.get("preview") === "on";
+  const clientRequestId = parseClientRequestId(String(formData.get("clientRequestId") ?? ""));
+
+  if (!areaId || !jobTitleId || !difficulty || !experience || count === null || !clientRequestId) {
+    return { error: "Invalid assessment configuration. Please review and try again." };
+  }
+
+  const ctxResult = await validateRoleContext(areaId, jobTitleId);
+  if (!ctxResult.ok || ctxResult.context.assessmentFlow !== "CODING") {
+    return { error: "This job title cannot start a coding assessment." };
+  }
+
+  const selectedSkillIds = String(formData.get("skillIds") ?? "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  const result = await createRoleAssessment({
+    userId: user.id,
+    areaId,
+    jobTitleId,
+    difficulty,
+    experience,
+    count,
+    previewEnabled,
+    jd: null,
+    clientRequestId,
+    selectedSkillIds,
+  });
 
   if (!result.ok) {
     if (result.reason === "insufficient") {

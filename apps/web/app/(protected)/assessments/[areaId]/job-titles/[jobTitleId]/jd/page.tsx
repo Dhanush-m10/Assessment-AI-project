@@ -7,12 +7,12 @@ import {
   validateRoleContext,
 } from "@/lib/assessment/basic-mcq";
 import { parseCount, parseDifficulty } from "@/lib/assessment/general";
-import { parseCodingCount } from "@/lib/assessment/limits";
 import { getPrisma } from "@/lib/prisma";
 import { Card, EmptyState } from "@/components/ui/card";
 import { SkillChip } from "@/components/ui/badges";
 import { StepIndicator } from "@/components/ui/step-indicator";
 import { JdForm } from "@/components/assessment/jd-form";
+import { ConfigSummary } from "@/components/assessment/config-summary";
 import { EXPERIENCE_META } from "@/components/assessment/experience-meta";
 
 export const dynamic = "force-dynamic";
@@ -22,12 +22,16 @@ export const metadata = { title: "Job Description · Assessment AI" };
 type Skill = { id: string; name: string };
 
 /**
- * JD finalization step (BASIC_MCQ and BASIC_SKILLS_MCQ). Config arrives via
- * searchParams and is re-validated here (difficulty enum, experience enum,
- * count) and again inside the creation action. The flow itself comes from
- * the database, never from the client. For BASIC_SKILLS_MCQ the `skills`
- * param is cross-checked against the job title's own active skills, so ids
- * cannot be injected; unknown ids are dropped and re-checked at creation.
+ * JD finalization step (BASIC_MCQ and BASIC_SKILLS_MCQ only). Config
+ * arrives via searchParams and is re-validated here (difficulty enum,
+ * experience enum, count) and again inside the creation action. The flow
+ * itself comes from the database, never from the client. For
+ * BASIC_SKILLS_MCQ the `skills` param is cross-checked against the job
+ * title's own active skills, so ids cannot be injected; unknown ids are
+ * dropped and re-checked at creation.
+ *
+ * CODING never lands here: the coding chain finalizes at the skills step
+ * (no JD for coding) — a direct URL is a dead path and 404s.
  */
 export default async function JdPage({
   params,
@@ -56,16 +60,12 @@ export default async function JdPage({
   if (!ctxResult.ok) notFound();
   if (
     ctxResult.context.assessmentFlow !== "BASIC_MCQ" &&
-    ctxResult.context.assessmentFlow !== "BASIC_SKILLS_MCQ" &&
-    ctxResult.context.assessmentFlow !== "CODING"
+    ctxResult.context.assessmentFlow !== "BASIC_SKILLS_MCQ"
   ) {
     notFound();
   }
-  const isCoding = ctxResult.context.assessmentFlow === "CODING";
-  // CODING follows the same skills -> JD chain as BASIC_SKILLS_MCQ.
-  const skillsFlow =
-    ctxResult.context.assessmentFlow === "BASIC_SKILLS_MCQ" || isCoding;
-  const count = isCoding ? parseCodingCount(sp.count ?? "") : parseCount(sp.count ?? "");
+  const skillsFlow = ctxResult.context.assessmentFlow === "BASIC_SKILLS_MCQ";
+  const count = parseCount(sp.count ?? "");
 
   const setupHref = `/assessments/${areaId}/job-titles/${jobTitleId}`;
   const configQuery = `difficulty=${sp.difficulty ?? ""}&experience=${sp.experience ?? ""}&count=${sp.count ?? ""}&preview=${preview ? "on" : "off"}&adaptive=${adaptive ? "on" : "off"}`;
@@ -136,42 +136,22 @@ export default async function JdPage({
           {ctxResult.context.jobTitleName}
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          {isCoding
-            ? "Finalize the job description your coding assessment is based on. Its skills prioritise which challenges are selected."
-            : "Finalize the job description your assessment is based on."}
+          Finalize the job description your assessment is based on.
         </p>
 
-        <dl className="mt-5 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm sm:grid-cols-4">
-          <div>
-            <dt className="text-slate-500">Difficulty</dt>
-            <dd className="font-bold text-slate-900">
-              {difficulty.charAt(0) + difficulty.slice(1).toLowerCase()}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-slate-500">Experience</dt>
-            <dd className="font-bold text-slate-900">{experienceLabel}</dd>
-          </div>
-          <div>
-            <dt className="text-slate-500">{isCoding ? "Challenges" : "Questions"}</dt>
-            <dd className="font-bold text-slate-900">{count}</dd>
-          </div>
-          <div>
-            <dt className="text-slate-500">Preview</dt>
-            <dd className="font-bold text-slate-900">{adaptive ? "—" : preview ? "On" : "Off"}</dd>
-          </div>
-          <div>
-            <dt className="text-slate-500">Mode</dt>
-            <dd className="font-bold text-slate-900">{adaptive ? "Adaptive" : "Standard"}</dd>
-          </div>
-        </dl>
+        <ConfigSummary
+          difficulty={difficulty}
+          experience={experience}
+          count={count}
+          preview={preview}
+          adaptive={adaptive}
+        />
 
         {selectedSkills.length > 0 && (
           <div className="mt-4">
             <p className="text-sm text-slate-500">
-              {isCoding
-                ? "Prioritised skills — challenges tagged with these skills are selected first (then job-description and job-title skills):"
-                : "Prioritised skills — questions are split evenly across your final skill set (selected first, then job-description and job-title skills):"}
+              Prioritised skills — questions are split evenly across your final skill set
+              (selected first, then job-description and job-title skills):
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               {selectedSkills.map((s) => (
