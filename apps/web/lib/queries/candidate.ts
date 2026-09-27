@@ -522,3 +522,55 @@ export async function getAssessmentResult(
     codingQuestions,
   };
 }
+
+export type CodingTrackTitle = {
+  id: string;
+  name: string;
+  areaId: string;
+  areaName: string;
+  categoryName: string;
+};
+
+export type CodingTrack = {
+  /** LIVE CODING job titles under LIVE areas of LIVE categories, in a
+   *  deterministic order (area, then name). Empty => the DSA & Coding
+   *  entry points are hidden entirely (no dead CTAs). */
+  jobTitles: CodingTrackTitle[];
+};
+
+/** DSA & Coding track (Phase C0): every role that runs the CODING flow.
+ *  Display-safe fields only; links into the existing job-title setup chain. */
+export async function getCodingTrack(): Promise<CodingTrack> {
+  type CodingTitleRow = {
+    id: string;
+    name: string;
+    areaOfInterestId: string;
+    areaOfInterest: { id: string; name: string; category: { name: string } };
+  };
+  const rows = (await prisma().jobTitle.findMany({
+    where: {
+      status: "LIVE",
+      assessmentFlow: "CODING",
+      areaOfInterest: { status: "LIVE", category: { status: "LIVE" } },
+    },
+    orderBy: [{ areaOfInterestId: "asc" }, { name: "asc" }],
+    select: {
+      id: true,
+      name: true,
+      areaOfInterestId: true,
+      areaOfInterest: {
+        select: { id: true, name: true, category: { select: { name: true } } },
+      },
+    },
+  })) as CodingTitleRow[];
+
+  return {
+    jobTitles: rows.map((t) => ({
+      id: t.id,
+      name: t.name,
+      areaId: t.areaOfInterestId,
+      areaName: t.areaOfInterest.name,
+      categoryName: t.areaOfInterest.category.name,
+    })),
+  };
+}

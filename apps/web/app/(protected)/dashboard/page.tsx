@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth/require-user";
-import { getDashboardData } from "@/lib/queries/candidate";
+import { getDashboardData, getCodingTrack } from "@/lib/queries/candidate";
 import { bandLabel, formatDate } from "@/lib/format";
 import {
   Card,
@@ -10,6 +10,7 @@ import {
   SectionHeading,
   StatCard,
 } from "@/components/ui/card";
+import { DsaCodingCard } from "@/components/ui/dsa-coding-card";
 import { IconArrowRight, IconChart, IconPlusSquare, IconTarget } from "@/components/ui/icons";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +26,7 @@ export const metadata = { title: "Dashboard · Assessment AI" };
  */
 export default async function DashboardPage() {
   const user = await requireUser();
-  const data = await getDashboardData(user.id);
+  const [data, track] = await Promise.all([getDashboardData(user.id), getCodingTrack()]);
   const firstName = (user.email ?? "").split("@")[0].split(/[._-]+/)[0] || "there";
   const hasHistory = data.taken > 0;
 
@@ -55,6 +56,13 @@ export default async function DashboardPage() {
           caption="Unique Skills Evaluated"
         />
       </section>
+
+      {/* DSA & Coding entry (Phase C0): hidden when no live coding roles. */}
+      {track.jobTitles.length > 0 && (
+        <section aria-label="DSA and coding">
+          <DsaCodingCard />
+        </section>
+      )}
 
       <section className="grid gap-5 lg:grid-cols-3">
         <Card className="p-6 lg:col-span-2">
