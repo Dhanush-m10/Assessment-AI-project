@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   runCodeAction,
@@ -11,6 +11,7 @@ import type { CodingTakingData, TestRunView } from "@/lib/assessment/coding";
 import { languageLabel } from "@/lib/judge0/languages";
 import { Card, ProgressBar } from "@/components/ui/card";
 import { DifficultyBadge, SkillChip } from "@/components/ui/badges";
+import { CodeEditor } from "@/components/assessment/code-editor";
 import { IconChevronLeft, IconChevronRight } from "@/components/ui/icons";
 
 /**
@@ -48,7 +49,6 @@ export function CodingTakingScreen({ data }: { data: CodingTakingData }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
-  const editorRef = useRef<HTMLTextAreaElement>(null);
 
   const total = data.questions.length;
   const question = data.questions[idx];
@@ -60,21 +60,6 @@ export function CodingTakingScreen({ data }: { data: CodingTakingData }) {
 
   const setCode = (code: string) =>
     setStates((s) => ({ ...s, [question.id]: { ...s[question.id], code } }));
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Plain-textarea editor: Tab inserts two spaces instead of leaving.
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const el = e.currentTarget;
-      const start = el.selectionStart;
-      const end = el.selectionEnd;
-      const next = `${el.value.slice(0, start)}  ${el.value.slice(end)}`;
-      setCode(next);
-      requestAnimationFrame(() => {
-        el.selectionStart = el.selectionEnd = start + 2;
-      });
-    }
-  };
 
   const run = () => {
     setActionError(null);
@@ -201,9 +186,9 @@ export function CodingTakingScreen({ data }: { data: CodingTakingData }) {
 
       <Card className="p-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <label htmlFor="code-editor" className="text-sm font-semibold text-slate-800">
+          <span className="text-sm font-semibold text-slate-800">
             Your code — {languageLabel(question.language)}
-          </label>
+          </span>
           {state.passed !== null && (
             <span
               className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ring-1 ${
@@ -216,17 +201,13 @@ export function CodingTakingScreen({ data }: { data: CodingTakingData }) {
             </span>
           )}
         </div>
-        <textarea
-          id="code-editor"
-          ref={editorRef}
-          value={state.code}
-          onChange={(e) => setCode(e.target.value)}
-          onKeyDown={onKeyDown}
-          spellCheck={false}
-          rows={14}
-          className="mt-3 w-full resize-y rounded-xl border border-slate-300 bg-slate-950 p-4 font-mono text-[13px] leading-relaxed text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-          aria-label="Code editor"
-        />
+        <div className="mt-3 h-[340px] resize-y overflow-hidden rounded-xl border border-slate-300 bg-slate-950 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30">
+          <CodeEditor
+            value={state.code}
+            onChange={setCode}
+            language={question.language}
+          />
+        </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
