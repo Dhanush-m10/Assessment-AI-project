@@ -23,7 +23,7 @@ SHARED_SECRET_ENV = "AI_SERVICE_SHARED_SECRET"
 # Provider default per docs/spec (Google Gemini). A small, current, cheap
 # model is a safe default; it is a code-level constant, not a config
 # variable. No preview models and no aliases — pinned model identifier.
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.5-flash"
 
 # Bounded provider timeout: one generation call for a full batch (<= 50 MCQ /
 # <= 10 coding) must finish well within this.

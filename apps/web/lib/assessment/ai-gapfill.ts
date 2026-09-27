@@ -67,6 +67,7 @@ async function fetchAreaName(areaId: string): Promise<string | null> {
     where: { id: areaId },
     select: { name: true },
   })) as { name: string } | null;
+
   return row?.name ?? null;
 }
 
@@ -75,15 +76,18 @@ async function fetchJobTitleName(jobTitleId: string): Promise<string | null> {
     where: { id: jobTitleId },
     select: { name: true },
   })) as { name: string } | null;
+
   return row?.name ?? null;
 }
 
 async function fetchSkillNames(skillIds: string[]): Promise<Map<string, string>> {
   if (skillIds.length === 0) return new Map();
+
   const rows = (await getPrisma().skill.findMany({
     where: { id: { in: skillIds } },
     select: { id: true, name: true },
   })) as { id: string; name: string }[];
+
   return new Map(rows.map((r) => [r.id, r.name]));
 }
 
@@ -145,10 +149,12 @@ export async function fillPlainMcqGap(args: {
 }): Promise<EligibleQuestion[] | null> {
   try {
     if (args.gap <= 0) return [];
+
     const [areaName, jobTitleName] = await Promise.all([
       args.areaId ? fetchAreaName(args.areaId) : Promise.resolve(null),
       args.jobTitleId ? fetchJobTitleName(args.jobTitleId) : Promise.resolve(null),
     ]);
+
     const request: McqGenerationRequest = {
       flow: args.flow,
       difficulty: args.difficulty,
@@ -156,7 +162,9 @@ export async function fillPlainMcqGap(args: {
       area: args.flow === "GENERAL" ? areaName ?? undefined : undefined,
       jobTitle: args.flow === "BASIC_MCQ" ? jobTitleName ?? undefined : undefined,
     };
+
     const items = await activeClient.generateMcq(request);
+
     const result = await validateGeneratedMcq(items, {
       flow: args.flow,
       difficulty: args.difficulty,
@@ -165,8 +173,20 @@ export async function fillPlainMcqGap(args: {
       areaId: args.areaId,
       jobTitleId: args.jobTitleId,
     });
-    // Full-gap rule (V1): anything short of the exact gap → no partial fill.
-    if (!result.ok || result.questions.length !== args.gap) return null;
+
+    // ---------------------------------------------------------------
+    // TEMPORARY DIAGNOSTIC LOGGING
+    // This tells us whether the AI response is being rejected by the
+    // deterministic server-side validator.
+    // ---------------------------------------------------------------
+    console.log("[AI GAP-FILL] Generated:", items.length);
+    console.log("[AI GAP-FILL] Accepted:", result.questions.length);
+    console.log("[AI GAP-FILL] Rejected:", result.rejected);
+
+    if (!result.ok || result.questions.length !== args.gap) {
+      return null;
+    }
+
     return result.questions.map(toEligibleQuestion);
   } catch {
     return null;
@@ -186,22 +206,35 @@ export function computeSkillGaps(args: {
 }): { skillId: string; count: number }[] {
   const { count, orderedSkillIds, allocatedBySkill } = args;
   const n = orderedSkillIds.length;
+
   if (n === 0) return [];
+
   const base = Math.floor(count / n);
   const remainder = count % n;
+
   const gaps = orderedSkillIds.map((skillId, i) => {
     const target = base + (i < remainder ? 1 : 0);
-    return { skillId, count: Math.max(0, target - (allocatedBySkill.get(skillId) ?? 0)) };
+
+    return {
+      skillId,
+      count: Math.max(0, target - (allocatedBySkill.get(skillId) ?? 0)),
+    };
   });
-  const overall = count - [...allocatedBySkill.values()].reduce((a, b) => a + b, 0);
+
+  const overall =
+    count - [...allocatedBySkill.values()].reduce((a, b) => a + b, 0);
+
   let total = gaps.reduce((a, g) => a + g.count, 0);
+
   if (total > overall) {
     for (let i = gaps.length - 1; i >= 0 && total > overall; i--) {
       const excess = Math.min(gaps[i].count, total - overall);
+
       gaps[i].count -= excess;
       total -= excess;
     }
   }
+
   return gaps;
 }
 
@@ -221,13 +254,17 @@ export async function fillQuotaGaps(args: {
 }): Promise<(EligibleQuestion & { quotaSkillId: string })[] | null> {
   try {
     if (args.gaps.every((g) => g.count <= 0)) return [];
+
     const jobTitleName = await fetchJobTitleName(args.jobTitleId);
     const needed = args.gaps.filter((g) => g.count > 0);
     const skillNames = await fetchSkillNames(needed.map((g) => g.skillId));
+
     const existing: string[] = [...args.existingNormalizedTexts];
     const out: (EligibleQuestion & { quotaSkillId: string })[] = [];
+
     for (const gap of args.gaps) {
       if (gap.count <= 0) continue;
+
       const items: GeneratedMcq[] = await activeClient.generateMcq({
         flow: "BASIC_SKILLS_MCQ",
         difficulty: args.difficulty,
@@ -235,6 +272,7 @@ export async function fillQuotaGaps(args: {
         skill: skillNames.get(gap.skillId) ?? undefined,
         jobTitle: jobTitleName ?? undefined,
       });
+
       const result = await validateGeneratedMcq(items, {
         flow: "BASIC_SKILLS_MCQ",
         difficulty: args.difficulty,
@@ -244,12 +282,19 @@ export async function fillQuotaGaps(args: {
         areaId: null,
         existingNormalizedTexts: existing,
       });
+
       if (!result.ok || result.questions.length !== gap.count) return null;
+
       for (const q of result.questions) {
-        out.push({ ...toEligibleQuestion(q), quotaSkillId: gap.skillId });
+        out.push({
+          ...toEligibleQuestion(q),
+          quotaSkillId: gap.skillId,
+        });
+
         existing.push(normalizeText(q.questionText));
       }
     }
+
     return out;
   } catch {
     return null;
@@ -271,31 +316,55 @@ export async function resolveCodingLanguage(args: {
   jobTitleId: string;
 }): Promise<string | null> {
   const seen = new Set<string>();
+
   for (const raw of args.selectedLanguages) {
     const lang = raw.trim().toLowerCase();
+
     if (!lang) continue;
+
     if (seen.size > 0 && !seen.has(lang)) break; // mixed → pool majority
+
     seen.add(lang);
   }
+
   if (seen.size === 1) return [...seen][0];
 
   const rows = (await getPrisma().codingQuestion.findMany({
-    where: { status: "LIVE", jobTitles: { some: { jobTitleId: args.jobTitleId } } },
-    select: { language: true },
+    where: {
+      status: "LIVE",
+      jobTitles: {
+        some: {
+          jobTitleId: args.jobTitleId,
+        },
+      },
+    },
+    select: {
+      language: true,
+    },
   })) as { language: string }[];
+
   const tally = new Map<string, number>();
+
   for (const row of rows) {
     const lang = row.language.trim().toLowerCase();
-    if (lang) tally.set(lang, (tally.get(lang) ?? 0) + 1);
+
+    if (lang) {
+      tally.set(lang, (tally.get(lang) ?? 0) + 1);
+    }
   }
+
   let best: string | null = null;
   let bestCount = 0;
-  for (const [lang, count] of [...tally.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+
+  for (const [lang, count] of [...tally.entries()].sort((a, b) =>
+    a[0] < b[0] ? -1 : 1,
+  )) {
     if (count > bestCount) {
       best = lang;
       bestCount = count;
     }
   }
+
   return best;
 }
 
@@ -313,7 +382,9 @@ export async function fillCodingGap(args: {
 }): Promise<EligibleCodingQuestion[] | null> {
   try {
     if (args.gap <= 0) return [];
+
     const jobTitleName = await fetchJobTitleName(args.jobTitleId);
+
     const request: CodingGenerationRequest = {
       flow: "CODING",
       difficulty: args.difficulty,
@@ -321,14 +392,20 @@ export async function fillCodingGap(args: {
       jobTitle: jobTitleName ?? undefined,
       language: args.language,
     };
+
     const items: GeneratedCoding[] = await activeClient.generateCoding(request);
+
     const result = await validateGeneratedCoding(items, {
       difficulty: args.difficulty,
       count: args.gap,
       language: args.language,
       jobTitleId: args.jobTitleId,
     });
-    if (!result.ok || result.questions.length !== args.gap) return null;
+
+    if (!result.ok || result.questions.length !== args.gap) {
+      return null;
+    }
+
     return result.questions.map(toEligibleCoding);
   } catch {
     return null;
