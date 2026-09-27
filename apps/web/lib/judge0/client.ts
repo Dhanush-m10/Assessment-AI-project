@@ -6,14 +6,27 @@
  * details (tokens, raw API bodies, stack traces) are never forwarded.
  *
  * Each test case is executed as one Judge0 submission with wait=true
- * (synchronous result), which keeps the flow simple and avoids polling
- * infrastructure. A hard AbortController timeout bounds every request.
+ * (synchronous result). Hosted deployments (e.g. the RapidAPI Judge0 CE
+ * endpoint) may answer before the run finishes; in that case the client
+ * falls back to BOUNDED polling of GET /submissions/{token} inside the same
+ * overall 20s budget (fixed interval, hard poll cap — never infinite).
+ * Every request is bounded by an AbortController.
+ *
+ * RapidAPI auth: X-RapidAPI-Key comes from JUDGE0_API_KEY and
+ * X-RapidAPI-Host is derived from the JUDGE0_BASE_URL hostname, so the base
+ * URL stays the single source of truth (no duplicate env var).
  */
 
 import { judge0StatusLabel, resolveJudge0Language } from "@/lib/judge0/languages";
 
 const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_SOURCE_CHARS = 100_000;
+const POLL_INTERVAL_MS = 1_500;
+const MAX_POLLS = 12;
+const FIELDS = "status,stdout,stderr,compile_output,time";
+
+/** Non-terminal Judge0 statuses (1 In queue, 2 Processing). */
+const NON_TERMINAL_STATUS_IDS: ReadonlySet<number> = new Set([1, 2]);
 
 export type Judge0TestInput = {
   input: string;
@@ -42,10 +55,17 @@ export type Judge0RunResult =
   | { ok: true; results: Judge0TestResult[] }
   | { ok: false; reason: Judge0Failure };
 
-function config(): { baseUrl: string; apiKey: string | null } | null {
-  const baseUrl = process.env.JUDGE0_BASE_URL;
-  if (!baseUrl) return null;
-  return { baseUrl: baseUrl.replace(/\/+$/, ""), apiKey: process.env.JUDGE0_API_KEY ?? null };
+function config(): { baseUrl: string; host: string | null; apiKey: string | null } | null {
+  const baseUrlRaw = process.env.JUDGE0_BASE_URL;
+  if (!baseUrlRaw) return null;
+  const baseUrl = baseUrlRaw.replace(/\/+$/, "");
+  let host: string | null = null;
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    host = null; // malformed URL: the request fails later -> "unavailable"
+  }
+  return { baseUrl, host, apiKey: process.env.JUDGE0_API_KEY ?? null };
 }
 
 export function judge0Configured(): boolean {
@@ -53,12 +73,14 @@ export function judge0Configured(): boolean {
 }
 
 /** Judge0 CE and the RapidAPI deployment differ in auth header; send both
- *  accepted spellings — a deployment ignores the header it doesn't use. */
-function authHeaders(apiKey: string | null): Record<string, string> {
+ *  accepted spellings — a deployment ignores the header it doesn't use.
+ *  RapidAPI additionally requires X-RapidAPI-Host (derived, see header). */
+function authHeaders(apiKey: string | null, host: string | null): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (apiKey) {
     headers["X-RapidAPI-Key"] = apiKey;
     headers["X-Auth-Token"] = apiKey;
+    if (host) headers["X-RapidAPI-Host"] = host;
   }
   return headers;
 }
@@ -84,30 +106,49 @@ function outputsMatch(actual: string | null, expected: string): boolean {
   return norm(actual) === norm(expected);
 }
 
-async function executeOne(
-  baseUrl: string,
-  apiKey: string | null,
-  languageId: number,
-  sourceCode: string,
+type SubmissionBody = {
+  status?: { id?: unknown };
+  token?: unknown;
+  stdout?: unknown;
+  stderr?: unknown;
+  compile_output?: unknown;
+  time?: unknown;
+};
+
+/** Map a parsed submission body to the safe result shape (shared by the
+ *  initial wait=true response and poll responses). */
+function resultFromBody(
+  body: SubmissionBody,
   test: Judge0TestInput,
-): Promise<Judge0TestResult | { failure: Judge0Failure }> {
+): Judge0TestResult | { failure: Judge0Failure } {
+  const status = body.status;
+  if (typeof status?.id !== "number") return { failure: "malformed-response" };
+  const stdout = fromBase64(body.stdout);
+  const stderr = fromBase64(body.stderr) ?? fromBase64(body.compile_output);
+  return {
+    passed: status.id === 3 && outputsMatch(stdout, test.expectedOutput),
+    statusLabel: judge0StatusLabel(status.id),
+    stdout,
+    stderr,
+    timeSeconds: typeof body.time === "number" ? body.time : null,
+  };
+}
+
+async function fetchSubmission(
+  url: string,
+  headers: Record<string, string>,
+  init: { method: "POST"; body: string } | { method: "GET" },
+  timeoutMs: number,
+): Promise<SubmissionBody | { failure: Judge0Failure }> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
     response = await fetch(
-      `${baseUrl}/submissions?base64_encoded=true&wait=true&fields=status,stdout,stderr,compile_output,time`,
-      {
-        method: "POST",
-        headers: authHeaders(apiKey),
-        body: JSON.stringify({
-          language_id: languageId,
-          source_code: toBase64(sourceCode),
-          stdin: toBase64(test.input),
-          expected_output: toBase64(test.expectedOutput),
-        }),
-        signal: controller.signal,
-      },
+      url,
+      init.method === "POST"
+        ? { method: "POST", headers, body: init.body, signal: controller.signal }
+        : { method: "GET", headers, signal: controller.signal },
     );
   } catch {
     return { failure: "unavailable" };
@@ -123,24 +164,73 @@ async function executeOne(
   } catch {
     return { failure: "malformed-response" };
   }
-  const status = (body as { status?: { id?: unknown } })?.status;
-  if (typeof status?.id !== "number") return { failure: "malformed-response" };
-  const raw = body as {
-    stdout?: unknown;
-    stderr?: unknown;
-    compile_output?: unknown;
-    time?: unknown;
-  };
+  if (typeof body !== "object" || body === null) return { failure: "malformed-response" };
+  return body as SubmissionBody;
+}
 
-  const stdout = fromBase64(raw.stdout);
-  const stderr = fromBase64(raw.stderr) ?? fromBase64(raw.compile_output);
-  return {
-    passed: status.id === 3 && outputsMatch(stdout, test.expectedOutput),
-    statusLabel: judge0StatusLabel(status.id),
-    stdout,
-    stderr,
-    timeSeconds: typeof raw.time === "number" ? raw.time : null,
-  };
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function executeOne(
+  baseUrl: string,
+  host: string | null,
+  apiKey: string | null,
+  languageId: number,
+  sourceCode: string,
+  test: Judge0TestInput,
+): Promise<Judge0TestResult | { failure: Judge0Failure }> {
+  const headers = authHeaders(apiKey, host);
+  // One shared 20s budget for the whole test case (initial request + any
+  // bounded polling) — the existing worst-case bound, preserved.
+  const deadline = Date.now() + REQUEST_TIMEOUT_MS;
+
+  const first = await fetchSubmission(
+    `${baseUrl}/submissions?base64_encoded=true&wait=true&fields=${FIELDS}`,
+    headers,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        language_id: languageId,
+        source_code: toBase64(sourceCode),
+        stdin: toBase64(test.input),
+        expected_output: toBase64(test.expectedOutput),
+      }),
+    },
+    REQUEST_TIMEOUT_MS,
+  );
+  if ("failure" in first) return first;
+
+  const firstStatus = first.status?.id;
+  if (typeof firstStatus !== "number" || !NON_TERMINAL_STATUS_IDS.has(firstStatus)) {
+    return resultFromBody(first, test);
+  }
+
+  // Hosted endpoint answered before the run finished (its wait window is
+  // shorter than ours). Without a token there is nothing to track — report
+  // the controlled timeout instead of a fake "In queue" result.
+  if (typeof first.token !== "string" || first.token.length === 0) {
+    return { failure: "timeout" };
+  }
+
+  for (let i = 0; i < MAX_POLLS; i++) {
+    if (deadline - Date.now() <= POLL_INTERVAL_MS) return { failure: "timeout" };
+    await sleep(POLL_INTERVAL_MS);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return { failure: "timeout" };
+
+    const next = await fetchSubmission(
+      `${baseUrl}/submissions/${encodeURIComponent(first.token)}?base64_encoded=true&fields=${FIELDS}`,
+      headers,
+      { method: "GET" },
+      Math.min(remaining, REQUEST_TIMEOUT_MS),
+    );
+    if ("failure" in next) return next;
+
+    const status = next.status?.id;
+    if (typeof status === "number" && !NON_TERMINAL_STATUS_IDS.has(status)) {
+      return resultFromBody(next, test);
+    }
+  }
+  return { failure: "timeout" };
 }
 
 /**
@@ -175,7 +265,7 @@ export async function executeTests(
 
   const results: Judge0TestResult[] = [];
   for (const test of tests) {
-    const outcome = await executeOne(cfg.baseUrl, cfg.apiKey, resolved.id, sourceCode, test);
+    const outcome = await executeOne(cfg.baseUrl, cfg.host, cfg.apiKey, resolved.id, sourceCode, test);
     if ("failure" in outcome) return { ok: false, reason: outcome.failure };
     results.push(outcome);
   }

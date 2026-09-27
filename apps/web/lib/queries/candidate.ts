@@ -5,6 +5,7 @@ import type {
   ExperienceBandValue,
 } from "@/lib/assessment/limits";
 import { getPrisma } from "@/lib/prisma";
+import { languageLabel } from "@/lib/judge0/languages";
 
 /**
  * Candidate-facing reads (Phase 3).
@@ -536,6 +537,11 @@ export type CodingTrack = {
    *  deterministic order (area, then name). Empty => the DSA & Coding
    *  entry points are hidden entirely (no dead CTAs). */
   jobTitles: CodingTrackTitle[];
+  /** Distinct language labels of the LIVE coding questions tagged to these
+   *  job titles — the languages that are genuinely supported end to end
+   *  (real questions, starter code, tests, Judge0 mapping). Never
+   *  fabricated from the Judge0 language list. */
+  languages: string[];
 };
 
 /** DSA & Coding track (Phase C0): every role that runs the CODING flow.
@@ -564,6 +570,16 @@ export async function getCodingTrack(): Promise<CodingTrack> {
     },
   })) as CodingTitleRow[];
 
+  const titleIds = rows.map((t) => t.id);
+  const languageRows = titleIds.length
+    ? ((await prisma().codingQuestion.findMany({
+        where: { status: "LIVE", jobTitles: { some: { jobTitleId: { in: titleIds } } } },
+        distinct: ["language"],
+        orderBy: { language: "asc" },
+        select: { language: true },
+      })) as { language: string }[])
+    : [];
+
   return {
     jobTitles: rows.map((t) => ({
       id: t.id,
@@ -572,5 +588,6 @@ export async function getCodingTrack(): Promise<CodingTrack> {
       areaName: t.areaOfInterest.name,
       categoryName: t.areaOfInterest.category.name,
     })),
+    languages: languageRows.map((r) => languageLabel(r.language)),
   };
 }

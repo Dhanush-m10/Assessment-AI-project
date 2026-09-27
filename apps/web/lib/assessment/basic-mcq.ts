@@ -253,7 +253,7 @@ export type JdPayload = {
 };
 
 export type JdResolution =
-  | { ok: true; jdPayload: JdPayload; jdSkillIds: string[] }
+  | { ok: true; jdPayload: JdPayload | null; jdSkillIds: string[] }
   | { ok: false; reason: "invalid-jd"; message: string };
 
 /**
@@ -327,7 +327,10 @@ export async function createRoleAssessment(args: {
   experience: ExperienceBandValue;
   count: number;
   previewEnabled: boolean;
-  jd: JdChoice;
+  /** JD is required for the MCQ flows; CODING creates without a JD (the
+   *  coding chain skips the JD step — challenge selection uses the chosen
+   *  skills, job-title tags and the coding library directly). */
+  jd: JdChoice | null;
   clientRequestId: string;
   selectedSkillIds: string[];
 }): Promise<CreateRoleResult> {
@@ -351,7 +354,9 @@ export async function createRoleAssessment(args: {
     };
   }
 
-  const jdResolution = await resolveJdPayload(args.jd, ctx.jobTitleId, args.experience);
+  const jdResolution = args.jd
+    ? await resolveJdPayload(args.jd, ctx.jobTitleId, args.experience)
+    : { ok: true as const, jdPayload: null, jdSkillIds: [] as string[] };
   if (!jdResolution.ok) return jdResolution;
   const { jdPayload, jdSkillIds } = jdResolution;
 
@@ -506,7 +511,11 @@ export async function createAdaptiveAssessment(args: {
   }
 
   const jdResolution = await resolveJdPayload(args.jd, ctx.jobTitleId, args.experience);
-  if (!jdResolution.ok) return jdResolution;
+  // Adaptive V1 is MCQ-only and always has a JD; the null branch is
+  // unreachable but narrows the shared JdResolution union.
+  if (!jdResolution.ok || jdResolution.jdPayload === null) {
+    return { ok: false, reason: "invalid-jd", message: "A job description is required." };
+  }
   const { jdPayload, jdSkillIds } = jdResolution;
 
   // Tier-ordered final skill set (same ownership rules as the standard

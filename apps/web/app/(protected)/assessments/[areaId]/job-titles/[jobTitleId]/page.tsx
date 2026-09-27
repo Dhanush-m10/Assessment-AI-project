@@ -32,10 +32,13 @@ export default async function JobTitleSetupPage({
     assessmentFlow === "BASIC_SKILLS_MCQ" ||
     assessmentFlow === "CODING";
   const isCoding = assessmentFlow === "CODING";
+  // CODING has no JD step: Setup -> Skills (finalize) -> Preview.
   const steps =
-    assessmentFlow === "BASIC_SKILLS_MCQ" || isCoding
+    assessmentFlow === "BASIC_SKILLS_MCQ"
       ? ["Job title", "Setup", "Skills", "Job description", "Preview"]
-      : ["Job title", "Setup", "Job description", "Preview"];
+      : isCoding
+        ? ["Job title", "Setup", "Skills", "Preview"]
+        : ["Job title", "Setup", "Job description", "Preview"];
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
