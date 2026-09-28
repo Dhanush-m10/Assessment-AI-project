@@ -610,19 +610,24 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
           })),
         ),
       });
-      if (args.selection.areaId) {
+      // Truthy guards below double as validity checks (a blank id would
+      // build invalid join rows); the const captures let the narrowing
+      // propagate into the map callbacks with definite string types.
+      const areaId = args.selection.areaId;
+      const jobTitleId = args.selection.jobTitleId;
+      if (areaId) {
         await tx.questionArea.createMany({
           data: aiSelected.map((q) => ({
             questionId: q.id,
-            areaOfInterestId: args.selection.areaId,
+            areaOfInterestId: areaId,
           })),
         });
       }
-      if (args.selection.jobTitleId) {
+      if (jobTitleId) {
         await tx.questionJobTitle.createMany({
           data: aiSelected.map((q) => ({
             questionId: q.id,
-            jobTitleId: args.selection.jobTitleId,
+            jobTitleId: jobTitleId,
           })),
         });
       }
