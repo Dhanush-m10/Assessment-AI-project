@@ -165,6 +165,21 @@ export async function fillPlainMcqGap(args: {
       areaId: args.areaId,
       jobTitleId: args.jobTitleId,
     });
+
+    // ---------------------------------------------------------------
+    // TEMPORARY DIAGNOSTIC LOGGING
+    // This tells us whether the AI response is being rejected by the
+    // deterministic server-side validator.
+    // ---------------------------------------------------------------
+    console.log("[AI GAP-FILL] Generated:", items.length);
+    if (result.ok) {
+      console.log("[AI GAP-FILL] Accepted:", result.questions.length);
+      console.log("[AI GAP-FILL] Rejected:", result.rejected);
+    } else {
+      console.log("[AI GAP-FILL] Accepted:", 0);
+      console.log("[AI GAP-FILL] Rejected:", result.detail);
+    }
+
     // Full-gap rule (V1): anything short of the exact gap → no partial fill.
     if (!result.ok || result.questions.length !== args.gap) return null;
     return result.questions.map(toEligibleQuestion);
