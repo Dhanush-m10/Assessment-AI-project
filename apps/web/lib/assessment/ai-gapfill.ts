@@ -2,6 +2,7 @@ import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
 import {
+  AiServiceError,
   generateCoding,
   generateMcq,
   type CodingGenerationRequest,
@@ -129,6 +130,19 @@ function toEligibleCoding(item: ValidatedGeneratedCoding): EligibleCodingQuestio
   };
 }
 
+// ------------------------------------------------------------- gap outcome
+
+/**
+ * Outcome of a gap-fill attempt. `ok: false` carries a USER-SAFE description
+ * of why generation could not fill the gap (service failure vs. rejected /
+ * incomplete output) so the create path can surface the ACTUAL failure
+ * instead of a bare library-count claim. These functions still NEVER throw —
+ * the create path degrades to the controlled insufficient state.
+ */
+export type GapFillOutcome<T> =
+  | { ok: true; questions: T[] }
+  | { ok: false; detail: string };
+
 // ------------------------------------------------------------------- MCQ gap
 
 /**
@@ -142,9 +156,9 @@ export async function fillPlainMcqGap(args: {
   gap: number;
   areaId: string | null;
   jobTitleId: string | null;
-}): Promise<EligibleQuestion[] | null> {
+}): Promise<GapFillOutcome<EligibleQuestion>> {
   try {
-    if (args.gap <= 0) return [];
+    if (args.gap <= 0) return { ok: true, questions: [] };
     const [areaName, jobTitleName] = await Promise.all([
       args.areaId ? fetchAreaName(args.areaId) : Promise.resolve(null),
       args.jobTitleId ? fetchJobTitleName(args.jobTitleId) : Promise.resolve(null),
@@ -181,10 +195,32 @@ export async function fillPlainMcqGap(args: {
     }
 
     // Full-gap rule (V1): anything short of the exact gap → no partial fill.
-    if (!result.ok || result.questions.length !== args.gap) return null;
-    return result.questions.map(toEligibleQuestion);
-  } catch {
-    return null;
+    if (!result.ok) {
+      return {
+        ok: false,
+        detail:
+          "AI question generation did not return a complete set of valid questions. Please try again.",
+      };
+    }
+    if (result.questions.length !== args.gap) {
+      return {
+        ok: false,
+        detail: `AI question generation returned ${result.questions.length} of ${args.gap} valid questions. Please try again.`,
+      };
+    }
+    return { ok: true, questions: result.questions.map(toEligibleQuestion) };
+  } catch (err) {
+    console.error(
+      "[AI GAP-FILL] Generation failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return {
+      ok: false,
+      detail:
+        err instanceof AiServiceError
+          ? err.message
+          : "AI question generation is temporarily unavailable. Please try again.",
+    };
   }
 }
 
@@ -233,9 +269,9 @@ export async function fillQuotaGaps(args: {
   jobTitleId: string;
   gaps: { skillId: string; count: number }[];
   existingNormalizedTexts: string[];
-}): Promise<(EligibleQuestion & { quotaSkillId: string })[] | null> {
+}): Promise<GapFillOutcome<EligibleQuestion & { quotaSkillId: string }>> {
   try {
-    if (args.gaps.every((g) => g.count <= 0)) return [];
+    if (args.gaps.every((g) => g.count <= 0)) return { ok: true, questions: [] };
     const jobTitleName = await fetchJobTitleName(args.jobTitleId);
     const needed = args.gaps.filter((g) => g.count > 0);
     const skillNames = await fetchSkillNames(needed.map((g) => g.skillId));
@@ -259,15 +295,31 @@ export async function fillQuotaGaps(args: {
         areaId: null,
         existingNormalizedTexts: existing,
       });
-      if (!result.ok || result.questions.length !== gap.count) return null;
+      if (!result.ok || result.questions.length !== gap.count) {
+        return {
+          ok: false,
+          detail:
+            "AI question generation did not return a complete set of valid questions. Please try again.",
+        };
+      }
       for (const q of result.questions) {
         out.push({ ...toEligibleQuestion(q), quotaSkillId: gap.skillId });
         existing.push(normalizeText(q.questionText));
       }
     }
-    return out;
-  } catch {
-    return null;
+    return { ok: true, questions: out };
+  } catch (err) {
+    console.error(
+      "[AI GAP-FILL] Generation failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return {
+      ok: false,
+      detail:
+        err instanceof AiServiceError
+          ? err.message
+          : "AI question generation is temporarily unavailable. Please try again.",
+    };
   }
 }
 
@@ -325,9 +377,9 @@ export async function fillCodingGap(args: {
   gap: number;
   jobTitleId: string;
   language: string;
-}): Promise<EligibleCodingQuestion[] | null> {
+}): Promise<GapFillOutcome<EligibleCodingQuestion>> {
   try {
-    if (args.gap <= 0) return [];
+    if (args.gap <= 0) return { ok: true, questions: [] };
     const jobTitleName = await fetchJobTitleName(args.jobTitleId);
     const request: CodingGenerationRequest = {
       flow: "CODING",
@@ -343,9 +395,25 @@ export async function fillCodingGap(args: {
       language: args.language,
       jobTitleId: args.jobTitleId,
     });
-    if (!result.ok || result.questions.length !== args.gap) return null;
-    return result.questions.map(toEligibleCoding);
-  } catch {
-    return null;
+    if (!result.ok || result.questions.length !== args.gap) {
+      return {
+        ok: false,
+        detail:
+          "AI coding generation did not return a complete set of valid challenges. Please try again.",
+      };
+    }
+    return { ok: true, questions: result.questions.map(toEligibleCoding) };
+  } catch (err) {
+    console.error(
+      "[AI GAP-FILL] Generation failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return {
+      ok: false,
+      detail:
+        err instanceof AiServiceError
+          ? err.message
+          : "AI coding generation is temporarily unavailable. Please try again.",
+    };
   }
 }

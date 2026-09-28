@@ -305,7 +305,11 @@ export type AssessmentDraft = {
 
 export type CreateResult =
   | { ok: true; assessmentId: string; status: "PREVIEW" | "IN_PROGRESS" }
-  | { ok: false; reason: "insufficient"; available: number }
+  // `aiFailure` (optional) is set ONLY when the library pool was short AND
+  // the AI gap-fill attempt itself failed — the user-safe reason is carried
+  // here so the UI can surface the actual generation failure instead of a
+  // bare library-count claim.
+  | { ok: false; reason: "insufficient"; available: number; aiFailure?: string }
   | { ok: false; reason: "invalid-area" };
 
 /**
@@ -368,21 +372,28 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
           selectedLanguages: pool.map((q) => q.language),
           jobTitleId: args.selection.jobTitleId ?? "",
         }));
-      const generated =
-        language !== null
-          ? await fillCodingGap({
-              difficulty: args.selection.difficulty,
-              gap: args.count - pool.length,
-              jobTitleId: args.selection.jobTitleId ?? "",
-              language,
-            })
-          : null;
-      if (!generated) {
+      if (language === null) {
+        // No authoritative language reference exists (no library challenges
+        // for this job title) — generation is refused, no gap-fill attempt.
         return { ok: false, reason: "insufficient", available: pool.length };
+      }
+      const generated = await fillCodingGap({
+        difficulty: args.selection.difficulty,
+        gap: args.count - pool.length,
+        jobTitleId: args.selection.jobTitleId ?? "",
+        language,
+      });
+      if (!generated.ok) {
+        return {
+          ok: false,
+          reason: "insufficient",
+          available: pool.length,
+          aiFailure: generated.detail,
+        };
       }
       codingSelected = [
         ...pool.map((q) => ({ ...q })),
-        ...generated.map((q) => ({ ...q, aiGenerated: true })),
+        ...generated.questions.map((q) => ({ ...q, aiGenerated: true })),
       ];
     } else {
       codingSelected = pool.slice(0, args.count).map((q) => ({ ...q }));
@@ -427,12 +438,17 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
         gaps,
         existingNormalizedTexts: poolTexts.map((r) => normalizeText(r.questionText)),
       });
-      if (!generated) {
-        return { ok: false, reason: "insufficient", available: quota.available };
+      if (!generated.ok) {
+        return {
+          ok: false,
+          reason: "insufficient",
+          available: quota.available,
+          aiFailure: generated.detail,
+        };
       }
       selected = [
         ...quota.selected,
-        ...generated.map((q) => ({ ...q, aiGenerated: true })),
+        ...generated.questions.map((q) => ({ ...q, aiGenerated: true })),
       ];
     } else {
       selected = quota.selected;
@@ -447,12 +463,17 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
         areaId: args.selection.areaId ?? null,
         jobTitleId: args.selection.jobTitleId ?? null,
       });
-      if (!generated) {
-        return { ok: false, reason: "insufficient", available: eligible.length };
+      if (!generated.ok) {
+        return {
+          ok: false,
+          reason: "insufficient",
+          available: eligible.length,
+          aiFailure: generated.detail,
+        };
       }
       selected = [
         ...eligible.slice(0, args.count).map((q) => ({ ...q, quotaSkillId: null })),
-        ...generated.map((q) => ({ ...q, quotaSkillId: null, aiGenerated: true })),
+        ...generated.questions.map((q) => ({ ...q, quotaSkillId: null, aiGenerated: true })),
       ];
     } else {
       selected = eligible.slice(0, args.count).map((q) => ({ ...q, quotaSkillId: null }));
