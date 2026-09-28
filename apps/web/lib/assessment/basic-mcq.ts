@@ -333,6 +333,10 @@ export async function createRoleAssessment(args: {
   jd: JdChoice | null;
   clientRequestId: string;
   selectedSkillIds: string[];
+  /** CODING only (Phase C3): the first-class selected programming language
+   *  (validated server-side in the action before it gets here). Non-coding
+   *  flows omit it; adaptive creation never reaches this function. */
+  codingLanguage?: string | null;
 }): Promise<CreateRoleResult> {
   const ctxResult = await validateRoleContext(args.areaId, args.jobTitleId);
   if (!ctxResult.ok) return { ok: false, reason: ctxResult.reason };
@@ -345,6 +349,16 @@ export async function createRoleAssessment(args: {
     return { ok: false, reason: "unsupported-flow" };
   }
   const isCoding = ctx.assessmentFlow === "CODING";
+  // Phase C3: a CODING assessment always has a valid programming language —
+  // the action validates it; this re-check is defense in depth (the
+  // language drives challenge selection and is never silently substituted).
+  if (isCoding && !args.codingLanguage) {
+    return {
+      ok: false,
+      reason: "invalid-config",
+      message: "A programming language is required for coding assessments.",
+    };
+  }
   // D-LIMITS: coding mode is bounded to 1-10 challenges.
   if (isCoding && (args.count < CODING_COUNT_MIN || args.count > CODING_COUNT_MAX)) {
     return {
@@ -428,6 +442,9 @@ export async function createRoleAssessment(args: {
       difficulty: args.difficulty,
       jobTitleId: ctx.jobTitleId,
       preferredSkillIds: isCoding ? codingPreferredSkillIds : jdSkillIds,
+      // CODING only — the selected language filters challenge selection
+      // (hard) and is the authoritative language for AI gap-fill.
+      language: isCoding ? args.codingLanguage ?? undefined : undefined,
     },
     quotaSkills,
     skillSources,

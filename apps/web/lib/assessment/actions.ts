@@ -18,6 +18,7 @@ import {
   type JdChoice,
 } from "@/lib/assessment/basic-mcq";
 import { parseCodingCount } from "@/lib/assessment/limits";
+import { parseCodingLanguage } from "@/lib/assessment/coding-languages";
 import { answerAdaptiveQuestion, type AdaptiveTakingData } from "@/lib/assessment/adaptive";
 import { replaceQuestion, startFromPreview } from "@/lib/assessment/engine";
 import {
@@ -174,11 +175,17 @@ export async function startCodingAssessment(
   const difficulty = parseDifficulty(String(formData.get("difficulty") ?? ""));
   const experience = parseExperience(String(formData.get("experience") ?? ""));
   const count = parseCodingCount(String(formData.get("count") ?? ""));
+  // Phase C3: first-class programming language — required, validated
+  // server-side against the Judge0 language map (never trusted raw).
+  const language = parseCodingLanguage(String(formData.get("language") ?? ""));
   const previewEnabled = formData.get("preview") === "on";
   const clientRequestId = parseClientRequestId(String(formData.get("clientRequestId") ?? ""));
 
   if (!areaId || !jobTitleId || !difficulty || !experience || count === null || !clientRequestId) {
     return { error: "Invalid assessment configuration. Please review and try again." };
+  }
+  if (!language) {
+    return { error: "Choose a programming language to continue." };
   }
 
   const ctxResult = await validateRoleContext(areaId, jobTitleId);
@@ -202,10 +209,17 @@ export async function startCodingAssessment(
     jd: null,
     clientRequestId,
     selectedSkillIds,
+    codingLanguage: language,
   });
 
   if (!result.ok) {
     if (result.reason === "insufficient") {
+      if (result.available === 0) {
+        return {
+          error:
+            "No coding challenges available for this language yet. Please try another language or check back later.",
+        };
+      }
       return { error: INSUFFICIENT_MSG, available: result.available };
     }
     if (result.reason === "invalid-jd" || result.reason === "invalid-config") {

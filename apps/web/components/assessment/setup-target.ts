@@ -35,6 +35,8 @@ export type SetupFormValues = {
   adaptive: boolean;
   /** GENERAL only: idempotency key for the creation step (double-click safe). */
   clientRequestId?: string;
+  /** CODING only (Phase C3): the selected programming language. */
+  language?: string;
 };
 
 export function buildSetupHref(target: SetupFormTarget, v: SetupFormValues): string {
@@ -45,6 +47,8 @@ export function buildSetupHref(target: SetupFormTarget, v: SetupFormValues): str
       ? `difficulty=${v.difficulty}&count=${v.count}&preview=${preview ? "on" : "off"}${
           v.clientRequestId ? `&clientRequestId=${v.clientRequestId}` : ""
         }`
-      : `difficulty=${v.difficulty}&experience=${v.experience}&count=${v.count}&preview=${preview ? "on" : "off"}&adaptive=${v.adaptive ? "on" : "off"}`;
+      : `difficulty=${v.difficulty}&experience=${v.experience}&count=${v.count}&preview=${preview ? "on" : "off"}&adaptive=${v.adaptive ? "on" : "off"}${
+          v.language ? `&language=${encodeURIComponent(v.language)}` : ""
+        }`;
   return `${target.base}/${target.kind}?${query}`;
 }

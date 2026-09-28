@@ -5,6 +5,7 @@ import { Card, EmptyState } from "@/components/ui/card";
 import { SetupForm } from "@/components/assessment/setup-form";
 import { StepIndicator } from "@/components/ui/step-indicator";
 import { CODING_COUNT_MAX } from "@/lib/assessment/limits";
+import { listCodingLanguageOptions } from "@/lib/assessment/coding-languages";
 import { IconArrowRight } from "@/components/ui/icons";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +33,9 @@ export default async function JobTitleSetupPage({
     assessmentFlow === "BASIC_SKILLS_MCQ" ||
     assessmentFlow === "CODING";
   const isCoding = assessmentFlow === "CODING";
+  // Phase C3: language options come from the LIVE coding library for this
+  // job title (CODING only) — the client never invents languages.
+  const codingLanguages = isCoding ? await listCodingLanguageOptions(jobTitleId) : undefined;
   // CODING has no JD step: Setup -> Skills (finalize) -> Preview.
   const steps =
     assessmentFlow === "BASIC_SKILLS_MCQ"
@@ -69,6 +73,7 @@ export default async function JobTitleSetupPage({
                 showAdaptive={!isCoding}
                 maxCount={isCoding ? CODING_COUNT_MAX : undefined}
                 countNoun={isCoding ? "challenges" : "questions"}
+                codingLanguages={codingLanguages}
                 target={{
                   kind: assessmentFlow === "BASIC_SKILLS_MCQ" || isCoding ? "skills" : "jd",
                   base: `/assessments/${areaId}/job-titles/${jobTitleId}`,

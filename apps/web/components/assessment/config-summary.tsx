@@ -11,6 +11,7 @@ export function ConfigSummary({
   preview,
   countNoun = "Questions",
   adaptive = false,
+  language,
 }: {
   difficulty: string;
   experience: string;
@@ -18,12 +19,21 @@ export function ConfigSummary({
   preview: boolean;
   countNoun?: string;
   adaptive?: boolean;
+  /** CODING only (Phase C3): display label of the selected programming
+   *  language, e.g. "Python 3". Omitted for the MCQ flows. */
+  language?: string;
 }) {
   const experienceLabel =
     EXPERIENCE_META.find((e) => e.value === experience)?.label ?? experience;
 
   return (
     <dl className="mt-5 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm sm:grid-cols-4">
+      {language && (
+        <div>
+          <dt className="text-slate-500">Programming Language</dt>
+          <dd className="font-bold text-slate-900">{language}</dd>
+        </div>
+      )}
       <div>
         <dt className="text-slate-500">Difficulty</dt>
         <dd className="font-bold text-slate-900">

@@ -25,6 +25,7 @@ export function SetupForm({
   maxCount = GENERAL_COUNT_MAX,
   countNoun = "questions",
   showAdaptive = false,
+  codingLanguages,
 }: {
   target: SetupFormTarget;
   showExperience: boolean;
@@ -34,6 +35,10 @@ export function SetupForm({
   /** Phase 8: show the Standard/Adaptive mode choice (BASIC_MCQ and
    *  BASIC_SKILLS_MCQ only — never GENERAL, never CODING in V1). */
   showAdaptive?: boolean;
+  /** CODING only (Phase C3): server-provided list of languages the job
+   *  title actually has published challenges in (never invented).
+   *  undefined = no language step for this flow. */
+  codingLanguages?: { value: string; label: string }[];
 }) {
   const router = useRouter();
   const [difficulty, setDifficulty] = useState("EASY");
@@ -41,6 +46,11 @@ export function SetupForm({
   const [count, setCount] = useState(Math.min(10, maxCount));
   const [preview, setPreview] = useState(false);
   const [adaptive, setAdaptive] = useState(false);
+  // A language is pre-selected ONLY when the title publishes exactly one —
+  // otherwise the user makes an explicit choice (no "first seeded" default).
+  const [language, setLanguage] = useState(
+    codingLanguages?.length === 1 ? codingLanguages[0].value : "",
+  );
   const [error, setError] = useState<string | null>(null);
   // Idempotency key: generated ONCE per form instance (same pattern as
   // StartForm/JdForm) and shared with the creation step for GENERAL, so a
@@ -55,6 +65,14 @@ export function SetupForm({
 
   const go = () => {
     if (navigating || !requestId) return;
+    if (codingLanguages && codingLanguages.length === 0) {
+      setError("No coding languages are available for this job title yet, so a coding assessment cannot be created.");
+      return;
+    }
+    if (codingLanguages && codingLanguages.length > 0 && !language) {
+      setError("Select a programming language to continue.");
+      return;
+    }
     if (!Number.isInteger(count) || count < GENERAL_COUNT_MIN || count > maxCount) {
       setError(`${countNoun === "questions" ? "Question" : "Challenge"} count must be between ${GENERAL_COUNT_MIN} and ${maxCount}.`);
       return;
@@ -71,12 +89,46 @@ export function SetupForm({
         preview,
         adaptive,
         clientRequestId: target.kind === "preview" ? requestId : undefined,
+        language: codingLanguages?.length ? language || undefined : undefined,
       }),
     );
   };
 
   return (
     <div className="space-y-6">
+      {codingLanguages && codingLanguages.length > 0 && (
+        <div>
+          <label htmlFor="codingLanguage" className="text-sm font-semibold text-slate-800">
+            Programming language
+          </label>
+          <select
+            id="codingLanguage"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            className="mt-2 w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+          >
+            <option value="" disabled>
+              Choose a language…
+            </option>
+            {codingLanguages.map((l) => (
+              <option key={l.value} value={l.value}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-slate-500">
+            Every challenge and all code execution will use this language.
+          </p>
+        </div>
+      )}
+
+      {codingLanguages && codingLanguages.length === 0 && (
+        <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          No coding languages are available for this job title yet — challenges for it have not
+          been published.
+        </div>
+      )}
+
       <fieldset>
         <legend className="text-sm font-semibold text-slate-800">Difficulty</legend>
         <div className="mt-2 grid gap-3 sm:grid-cols-3">

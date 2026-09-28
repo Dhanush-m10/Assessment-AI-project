@@ -31,6 +31,10 @@ export function SkillsForm({
     experience: string;
     count: number;
     preview: boolean;
+    /** CODING only (Phase C3): the selected programming language. Always
+     *  set by the skills page for CODING; the server action re-validates
+     *  and requires it regardless. */
+    language?: string;
   };
 }) {
   const router = useRouter();
@@ -95,6 +99,9 @@ export function SkillsForm({
         <input type="hidden" name="experience" value={create.experience} />
         <input type="hidden" name="count" value={String(create.count)} />
         <input type="hidden" name="preview" value={create.preview ? "on" : "off"} />
+        {create.language && (
+          <input type="hidden" name="language" value={create.language} />
+        )}
         <input type="hidden" name="clientRequestId" value={requestId} />
         {selected.length > 0 && (
           <input type="hidden" name="skillIds" value={selected.join(",")} />

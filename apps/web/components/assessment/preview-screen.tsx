@@ -7,6 +7,7 @@ import {
   startFromPreviewAction,
 } from "@/lib/assessment/actions";
 import type { PreviewData } from "@/lib/assessment/engine";
+import { languageLabel } from "@/lib/judge0/languages";
 import { Card } from "@/components/ui/card";
 
 /**
@@ -102,7 +103,7 @@ export function PreviewScreen({ data }: { data: PreviewData }) {
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <h2 className="text-lg font-bold text-slate-900">{q.title}</h2>
                 <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
-                  {q.language}
+                  {languageLabel(q.language)}
                 </span>
               </div>
               <p className="mt-3 whitespace-pre-line text-sm text-slate-600">

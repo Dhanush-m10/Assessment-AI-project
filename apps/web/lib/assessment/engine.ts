@@ -59,6 +59,8 @@ export type SelectionContext = {
   /** Replacement candidate rule (never attempted / previously incorrect). */
   forReplacement?: boolean;
   excludeQuestionIds?: string[];
+  /** CODING only (Phase C3): the first-class selected programming language. */
+  language?: string;
 };
 
 export type EligibleQuestion = {
@@ -136,6 +138,10 @@ export type CodingSelectionContext = {
   /** Priority ordering only (spec §22: selected skills, JD skills and job
    *  title tags all boost relevance) — coding has no per-skill quotas in V1. */
   preferredSkillIds?: string[];
+  /** First-class language filter (Phase C3): exact match against
+   *  CodingQuestion.language. Applied BEFORE any skill prioritization —
+   *  a JavaScript challenge is never returned for a Python selection. */
+  language?: string;
   excludeQuestionIds?: string[];
   forReplacement?: boolean;
 };
@@ -166,6 +172,7 @@ export async function selectEligibleCodingQuestions(
       status: "LIVE",
       difficulty: ctx.difficulty,
       jobTitles: { some: { jobTitleId: ctx.jobTitleId } },
+      ...(ctx.language ? { language: ctx.language } : {}),
       ...(ctx.excludeQuestionIds?.length ? { id: { notIn: ctx.excludeQuestionIds } } : {}),
       NOT: {
         history: { some: { userId: ctx.userId, lastCorrectAt: { gte: thirtyDaysAgo } } },
@@ -343,17 +350,24 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
   // transaction. Every failure path returns the existing controlled
   // `insufficient` result — never a partial assessment, never a crash.
   if (args.flow === "CODING") {
+    // Phase C3: the user-selected programming language is a HARD filter on
+    // challenge selection (skill prioritization happens inside it). When a
+    // language is provided it is also the authoritative language for AI
+    // gap-fill — generation can never drift to another language.
     const pool = await selectEligibleCodingQuestions({
       userId: args.selection.userId,
       difficulty: args.selection.difficulty,
       jobTitleId: args.selection.jobTitleId ?? "",
+      language: args.selection.language,
       preferredSkillIds: args.selection.preferredSkillIds,
     });
     if (pool.length < args.count) {
-      const language = await resolveCodingLanguage({
-        selectedLanguages: pool.map((q) => q.language),
-        jobTitleId: args.selection.jobTitleId ?? "",
-      });
+      const language =
+        args.selection.language ??
+        (await resolveCodingLanguage({
+          selectedLanguages: pool.map((q) => q.language),
+          jobTitleId: args.selection.jobTitleId ?? "",
+        }));
       const generated =
         language !== null
           ? await fillCodingGap({
@@ -583,6 +597,7 @@ export async function replaceQuestion(
       id: true,
       sequence: true,
       skillId: true,
+      questionSnapshot: true,
       assessment: {
         select: {
           id: true,
@@ -601,6 +616,7 @@ export async function replaceQuestion(
     id: string;
     sequence: number;
     skillId: string | null;
+    questionSnapshot: unknown;
     assessment: {
       id: string;
       flow: string;
@@ -620,10 +636,16 @@ export async function replaceQuestion(
 
   // CODING branch: replace from the coding library (never swaps kinds).
   if (assessment.flow === "CODING" && assessment.jobTitleId) {
+    // Phase C3: a replacement must keep the assessment's language — derive
+    // it from the immutable snapshot of the question being replaced.
+    const replacementLanguage = isCodingSnapshot(target.questionSnapshot)
+      ? parseCodingSnapshot(target.questionSnapshot).language
+      : null;
     const codingCandidates = await selectEligibleCodingQuestions({
       userId,
       difficulty: assessment.difficulty,
       jobTitleId: assessment.jobTitleId,
+      language: replacementLanguage ?? undefined,
       preferredSkillIds: assessment.jdId
         ? ((await db.jobDescriptionSkill.findMany({
             where: { jobDescriptionId: assessment.jdId },
