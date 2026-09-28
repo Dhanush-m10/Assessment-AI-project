@@ -63,6 +63,10 @@ export function CodingTakingScreen({ data }: { data: CodingTakingData }) {
 
   const run = () => {
     setActionError(null);
+    // Clear this question's results immediately: while the new run is in
+    // flight the panel shows the loading state, so a previous execution is
+    // never displayed as the current one (stale-output guard).
+    setRunResults((r) => ({ ...r, [question.id]: [] }));
     setBusy("run");
     startTransition(async () => {
       const res = await runCodeAction(question.id, state.code);
@@ -237,33 +241,56 @@ export function CodingTakingScreen({ data }: { data: CodingTakingData }) {
           </p>
         )}
 
-        {runs && runs.length > 0 && (
-          <div className="mt-4 space-y-2" aria-live="polite">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Sample test results
-            </p>
-            {runs.map((r) => (
-              <div
-                key={r.index}
-                className={`rounded-lg border px-4 py-2.5 text-sm ${
-                  r.passed
-                    ? "border-emerald-200 bg-emerald-50/60 text-emerald-800"
-                    : "border-rose-200 bg-rose-50/60 text-rose-800"
-                }`}
-              >
-                <span className="font-bold">Test {r.index}:</span> {r.statusLabel}
-                {r.stderr && (
-                  <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-white/70 px-2 py-1.5 text-xs text-slate-600">
-                    {r.stderr}
-                  </pre>
-                )}
-                {!r.passed && r.stdout !== null && (
-                  <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-white/70 px-2 py-1.5 text-xs text-slate-600">
-                    your output: {r.stdout}
-                  </pre>
-                )}
-              </div>
-            ))}
+        {(busy === "run" || (runs && runs.length > 0)) && (
+          <div
+            className="mt-4 overflow-hidden rounded-xl border border-slate-800 bg-slate-950"
+            aria-live="polite"
+          >
+            <div className="flex items-center gap-1.5 border-b border-slate-800 px-4 py-2.5">
+              <span className="h-2.5 w-2.5 rounded-full bg-rose-500/80" />
+              <span className="h-2.5 w-2.5 rounded-full bg-amber-400/80" />
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/80" />
+              <span className="ml-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Output
+              </span>
+            </div>
+            <div className="space-y-4 px-4 py-3">
+              {busy === "run" ? (
+                <p className="font-mono text-sm text-slate-400">
+                  Running your code against the sample tests…
+                </p>
+              ) : (
+                runs!.map((r) => (
+                  <div key={r.index}>
+                    <p
+                      className={`font-mono text-sm font-bold ${
+                        r.passed ? "text-emerald-400" : "text-rose-400"
+                      }`}
+                    >
+                      {r.passed ? "✓" : "✕"} Test {r.index} — {r.statusLabel}
+                    </p>
+                    {r.stdout !== null && r.stdout.trim() !== "" ? (
+                      <>
+                        <p className="mt-1.5 text-xs text-slate-500">Output</p>
+                        <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-slate-900 px-3 py-2 font-mono text-xs leading-relaxed text-slate-200">
+                          {r.stdout}
+                        </pre>
+                      </>
+                    ) : (
+                      <p className="mt-1.5 text-xs italic text-slate-500">No output</p>
+                    )}
+                    {r.stderr && (
+                      <>
+                        <p className="mt-2 text-xs font-semibold text-rose-400">stderr</p>
+                        <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-rose-950/40 px-3 py-2 font-mono text-xs leading-relaxed text-rose-200">
+                          {r.stderr}
+                        </pre>
+                      </>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         )}
       </Card>
