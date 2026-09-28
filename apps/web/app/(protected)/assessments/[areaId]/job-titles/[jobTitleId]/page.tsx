@@ -36,12 +36,13 @@ export default async function JobTitleSetupPage({
   // Phase C3: language options come from the LIVE coding library for this
   // job title (CODING only) — the client never invents languages.
   const codingLanguages = isCoding ? await listCodingLanguageOptions(jobTitleId) : undefined;
-  // CODING has no JD step: Setup -> Skills (finalize) -> Preview.
+  // CODING has no JD step and (Phase C4) no candidate skill-selection step:
+  // Setup (with the programming-language choice) creates directly -> Preview.
   const steps =
     assessmentFlow === "BASIC_SKILLS_MCQ"
       ? ["Job title", "Setup", "Skills", "Job description", "Preview"]
       : isCoding
-        ? ["Job title", "Setup", "Skills", "Preview"]
+        ? ["Job title", "Setup", "Preview"]
         : ["Job title", "Setup", "Job description", "Preview"];
 
   return (
@@ -74,10 +75,14 @@ export default async function JobTitleSetupPage({
                 maxCount={isCoding ? CODING_COUNT_MAX : undefined}
                 countNoun={isCoding ? "challenges" : "questions"}
                 codingLanguages={codingLanguages}
-                target={{
-                  kind: assessmentFlow === "BASIC_SKILLS_MCQ" || isCoding ? "skills" : "jd",
-                  base: `/assessments/${areaId}/job-titles/${jobTitleId}`,
-                }}
+                target={
+                  isCoding
+                    ? { kind: "coding", areaId, jobTitleId }
+                    : {
+                        kind: assessmentFlow === "BASIC_SKILLS_MCQ" ? "skills" : "jd",
+                        base: `/assessments/${areaId}/job-titles/${jobTitleId}`,
+                      }
+                }
               />
             </div>
           </>

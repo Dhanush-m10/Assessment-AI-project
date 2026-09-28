@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useActionState, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   DIFFICULTIES_META,
@@ -9,15 +9,21 @@ import {
 } from "@/lib/assessment/limits";
 import { EXPERIENCE_META } from "@/components/assessment/experience-meta";
 import { buildSetupHref, type SetupFormTarget } from "./setup-target";
+import { startCodingAssessment } from "@/lib/assessment/actions";
 
 /**
- * Shared setup form (GENERAL + BASIC_MCQ): difficulty cards, optional
- * experience band (Basic MCQ only), question count 1–50 and the Preview
- * ON/OFF toggle. Navigates with query params; every value is re-validated
- * server-side on the next screen and again at creation.
+ * Shared setup form: difficulty cards, optional experience band (Basic MCQ
+ * only), question/challenge count and the Preview ON/OFF toggle.
  *
- * `target` is plain serializable data (RSC rule: no functions may cross the
- * server/client boundary) — see components/assessment/setup-target.ts.
+ * Two modes (by serializable `target` — see components/assessment/setup-target.ts):
+ * - "preview" / "skills" / "jd" (GENERAL + BASIC_MCQ + BASIC_SKILLS_MCQ):
+ *   navigates with query params; every value is re-validated server-side on
+ *   the next screen and again at creation.
+ * - "coding" (CODING, Phase C4): the setup form IS the creation step — it
+ *   submits to the startCodingAssessment server action (idempotent via
+ *   clientRequestId) and the server redirects to preview or take. There is
+ *   no candidate skill-selection step: challenge prioritization uses the
+ *   job title's internal skills server-side.
  */
 export function SetupForm({
   target,
@@ -41,6 +47,7 @@ export function SetupForm({
   codingLanguages?: { value: string; label: string }[];
 }) {
   const router = useRouter();
+  const isCoding = target.kind === "coding";
   const [difficulty, setDifficulty] = useState("EASY");
   const [experience, setExperience] = useState("Y0_2");
   const [count, setCount] = useState(Math.min(10, maxCount));
@@ -58,23 +65,36 @@ export function SetupForm({
   // a second one (unique clientRequestId index).
   const [requestId, setRequestId] = useState("");
   const [navigating, setNavigating] = useState(false);
+  // CODING (Phase C4): creation via server action.
+  const [state, formAction] = useActionState(startCodingAssessment, {});
+  const [pending, setPending] = useState(false);
+  const actionRef = useRef(formAction);
+  actionRef.current = formAction;
 
   useEffect(() => {
     setRequestId(crypto.randomUUID());
   }, []);
 
-  const go = () => {
-    if (navigating || !requestId) return;
+  /** Shared client-side pre-checks (both modes); the server re-validates
+   *  everything again — this only prevents a clearly invalid submit. */
+  const localProblem = (): string | null => {
     if (codingLanguages && codingLanguages.length === 0) {
-      setError("No coding languages are available for this job title yet, so a coding assessment cannot be created.");
-      return;
+      return "No coding languages are available for this job title yet, so a coding assessment cannot be created.";
     }
     if (codingLanguages && codingLanguages.length > 0 && !language) {
-      setError("Select a programming language to continue.");
-      return;
+      return "Select a programming language to continue.";
     }
     if (!Number.isInteger(count) || count < GENERAL_COUNT_MIN || count > maxCount) {
-      setError(`${countNoun === "questions" ? "Question" : "Challenge"} count must be between ${GENERAL_COUNT_MIN} and ${maxCount}.`);
+      return `${countNoun === "questions" ? "Question" : "Challenge"} count must be between ${GENERAL_COUNT_MIN} and ${maxCount}.`;
+    }
+    return null;
+  };
+
+  const go = () => {
+    if (navigating || !requestId) return;
+    const problem = localProblem();
+    if (problem) {
+      setError(problem);
       return;
     }
     setError(null);
@@ -94,8 +114,20 @@ export function SetupForm({
     );
   };
 
-  return (
-    <div className="space-y-6">
+  const onCodingSubmit = (e: FormEvent<HTMLFormElement>) => {
+    const problem = localProblem();
+    if (problem) {
+      e.preventDefault();
+      setError(problem);
+    } else {
+      setError(null);
+    }
+  };
+
+  const visibleError = error ?? (isCoding ? state.error : null);
+
+  const fields = (
+    <>
       {codingLanguages && codingLanguages.length > 0 && (
         <div>
           <label htmlFor="codingLanguage" className="text-sm font-semibold text-slate-800">
@@ -290,20 +322,57 @@ export function SetupForm({
         </span>
       </label>
 
-      {error && (
+      {visibleError && (
         <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
+          {visibleError}
+          {isCoding && state.available !== undefined ? ` (eligible: ${state.available})` : ""}
         </p>
       )}
 
       <button
-        type="button"
-        onClick={go}
-        disabled={navigating || !requestId}
+        type={isCoding ? "submit" : "button"}
+        onClick={isCoding ? undefined : go}
+        disabled={(isCoding ? pending : navigating) || !requestId}
         className="rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-600/40 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {navigating ? "Continuing…" : "Continue"}
+        {isCoding
+          ? pending
+            ? "Creating your assessment…"
+            : preview
+              ? "Create & preview assessment"
+              : "Create & start assessment"
+          : navigating
+            ? "Continuing…"
+            : "Continue"}
       </button>
-    </div>
+    </>
   );
+
+  if (isCoding) {
+    // CODING (Phase C4): create directly from setup — no skills step. The
+    // server action re-validates every value, creates the assessment and
+    // redirects to preview (when enabled) or take.
+    return (
+      <form
+        className="space-y-6"
+        action={(fd) => {
+          setPending(true);
+          actionRef.current(fd);
+        }}
+        onSubmit={onCodingSubmit}
+      >
+        <input type="hidden" name="areaId" value={target.areaId} />
+        <input type="hidden" name="jobTitleId" value={target.jobTitleId} />
+        <input type="hidden" name="difficulty" value={difficulty} />
+        <input type="hidden" name="experience" value={experience} />
+        <input type="hidden" name="count" value={String(count)} />
+        <input type="hidden" name="preview" value={preview ? "on" : "off"} />
+        {language && <input type="hidden" name="language" value={language} />}
+        <input type="hidden" name="clientRequestId" value={requestId} />
+        {fields}
+      </form>
+    );
+  }
+
+  return <div className="space-y-6">{fields}</div>;
 }

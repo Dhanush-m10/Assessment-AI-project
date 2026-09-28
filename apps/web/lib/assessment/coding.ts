@@ -138,6 +138,10 @@ const FAILURE_MESSAGES: Record<Judge0Failure, string> = {
     "This question's language is not supported by the code execution service.",
   "code-too-large": "Your code is too large to execute. Please shorten it.",
   unavailable: "The code execution service is unavailable right now. Please try again shortly.",
+  "auth-failed":
+    "Code execution is not authorized on the server. Please contact the administrator to check the Judge0 API key configuration.",
+  "http-error":
+    "The code execution service returned an error. Please try again shortly; if this persists, the administrator should check the server log.",
   timeout: "The code execution service timed out. Please try again shortly.",
   "malformed-response":
     "The code execution service returned an unexpected response. Please try again.",

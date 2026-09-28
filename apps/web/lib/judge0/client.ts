@@ -15,6 +15,22 @@
  * RapidAPI auth: X-RapidAPI-Key comes from JUDGE0_API_KEY and
  * X-RapidAPI-Host is derived from the JUDGE0_BASE_URL hostname, so the base
  * URL stays the single source of truth (no duplicate env var).
+ *
+ * Failure classification (C4.1) — every distinct cause keeps its own
+ * reason instead of collapsing into "unavailable":
+ *   not-configured     base URL missing, OR hosted RapidAPI URL without a key
+ *   unsupported-language / code-too-large  (pre-flight, unchanged)
+ *   unavailable        genuine network failure (DNS/TLS/connection)
+ *   auth-failed        HTTP 401/403 (invalid key, invalid host,
+ *                      subscription/quota problem)
+ *   http-error         any other non-2xx (404 wrong endpoint, 405,
+ *                      5xx gateway/queue)
+ *   timeout            our 20s budget exhausted (incl. the wait=true
+ *                      request aborted before the hosted side answered)
+ *   malformed-response unexpected response shape
+ * Each failure also logs ONE safe server-side diagnostic line (env presence
+ * booleans, resolved host, secret-free URL, HTTP status, truncated response
+ * preview, Judge0 status). Headers and request bodies are NEVER logged.
  */
 
 import { judge0StatusLabel, resolveJudge0Language } from "@/lib/judge0/languages";
@@ -48,6 +64,8 @@ export type Judge0Failure =
   | "unsupported-language"
   | "code-too-large"
   | "unavailable"
+  | "auth-failed"
+  | "http-error"
   | "timeout"
   | "malformed-response";
 
@@ -134,12 +152,26 @@ function resultFromBody(
   };
 }
 
+type FetchOutcome =
+  | { ok: true; body: SubmissionBody }
+  | { ok: false; failure: Judge0Failure; status?: number; bodyPreview?: string };
+
+/**
+ * One bounded Judge0 request with precise failure classification (C4.1).
+ * - abort by OUR timer  -> "timeout" (the hosted side may still be running;
+ *   this is not a network failure)
+ * - fetch throw         -> "unavailable" (genuine network failure)
+ * - 401/403             -> "auth-failed" (invalid key/host, subscription)
+ * - other non-2xx       -> "http-error" (wrong endpoint, gateway, queue)
+ * The truncated response preview (error bodies only) is returned for the
+ * server diagnostic line; it never reaches the client.
+ */
 async function fetchSubmission(
   url: string,
   headers: Record<string, string>,
   init: { method: "POST"; body: string } | { method: "GET" },
   timeoutMs: number,
-): Promise<SubmissionBody | { failure: Judge0Failure }> {
+): Promise<FetchOutcome> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
@@ -151,21 +183,68 @@ async function fetchSubmission(
         : { method: "GET", headers, signal: controller.signal },
     );
   } catch {
-    return { failure: "unavailable" };
+    return { ok: false, failure: controller.signal.aborted ? "timeout" : "unavailable" };
   } finally {
     clearTimeout(timer);
   }
 
-  if (!response.ok) return { failure: "unavailable" };
+  if (!response.ok) {
+    let bodyPreview: string | undefined;
+    try {
+      // Error bodies only (RapidAPI/Judge0 error JSON — small, secret-free);
+      // truncated so a pathological response can never bloat the log.
+      bodyPreview = (await response.text()).slice(0, 300);
+    } catch {
+      bodyPreview = undefined;
+    }
+    return {
+      ok: false,
+      failure: response.status === 401 || response.status === 403 ? "auth-failed" : "http-error",
+      status: response.status,
+      bodyPreview,
+    };
+  }
 
   let body: unknown;
   try {
     body = await response.json();
   } catch {
-    return { failure: "malformed-response" };
+    return { ok: false, failure: "malformed-response" };
   }
-  if (typeof body !== "object" || body === null) return { failure: "malformed-response" };
-  return body as SubmissionBody;
+  if (typeof body !== "object" || body === null) return { ok: false, failure: "malformed-response" };
+  return { ok: true, body: body as SubmissionBody };
+}
+
+/**
+ * Safe server-side diagnostic (C4.1) — identifies WHY execution failed
+ * without leaking secrets or candidate code. Logs env PRESENCE booleans
+ * (never values), the resolved host, the secret-free URL, HTTP status, a
+ * truncated response preview and the Judge0 status. Request headers (which
+ * carry the API key) and request bodies (which carry the candidate's
+ * source) are NEVER logged.
+ */
+function diagnose(
+  problem: string,
+  detail: { url: string; status?: number; bodyPreview?: string; judge0Status?: number; polls?: number },
+): void {
+  const cfg = config();
+  console.error(
+    "[judge0] execution failed:",
+    JSON.stringify({
+      problem,
+      baseUrlPresent: cfg !== null,
+      apiKeyPresent: cfg?.apiKey !== null,
+      host: cfg?.host ?? null,
+      url: detail.url,
+      httpStatus: detail.status ?? null,
+      responsePreview: detail.bodyPreview ?? null,
+      judge0Status:
+        detail.judge0Status !== undefined
+          ? { id: detail.judge0Status, label: judge0StatusLabel(detail.judge0Status) }
+          : null,
+      polls: detail.polls ?? 0,
+    }),
+  );
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -182,9 +261,11 @@ async function executeOne(
   // One shared 20s budget for the whole test case (initial request + any
   // bounded polling) — the existing worst-case bound, preserved.
   const deadline = Date.now() + REQUEST_TIMEOUT_MS;
+  const startedAt = Date.now();
+  const postUrl = `${baseUrl}/submissions?base64_encoded=true&wait=true&fields=${FIELDS}`;
 
   const first = await fetchSubmission(
-    `${baseUrl}/submissions?base64_encoded=true&wait=true&fields=${FIELDS}`,
+    postUrl,
     headers,
     {
       method: "POST",
@@ -197,39 +278,72 @@ async function executeOne(
     },
     REQUEST_TIMEOUT_MS,
   );
-  if ("failure" in first) return first;
+  if (!first.ok) {
+    diagnose("submission request failed", {
+      url: postUrl,
+      status: first.status,
+      bodyPreview: first.bodyPreview,
+    });
+    return { failure: first.failure };
+  }
 
-  const firstStatus = first.status?.id;
+  const firstStatus = first.body.status?.id;
   if (typeof firstStatus !== "number" || !NON_TERMINAL_STATUS_IDS.has(firstStatus)) {
-    return resultFromBody(first, test);
+    const result = resultFromBody(first.body, test);
+    if (!("failure" in result) && typeof firstStatus === "number") {
+      console.info(
+        "[judge0] submission ok:",
+        JSON.stringify({ judge0Status: judge0StatusLabel(firstStatus), polls: 0, elapsedMs: Date.now() - startedAt }),
+      );
+    }
+    return result;
   }
 
   // Hosted endpoint answered before the run finished (its wait window is
   // shorter than ours). Without a token there is nothing to track — report
   // the controlled timeout instead of a fake "In queue" result.
-  if (typeof first.token !== "string" || first.token.length === 0) {
+  if (typeof first.body.token !== "string" || first.body.token.length === 0) {
+    diagnose("hosted endpoint returned a non-terminal status without a token (nothing to poll)", {
+      url: postUrl,
+      judge0Status: firstStatus,
+    });
     return { failure: "timeout" };
   }
 
+  const pollUrl = `${baseUrl}/submissions/${encodeURIComponent(first.body.token)}?base64_encoded=true&fields=${FIELDS}`;
   for (let i = 0; i < MAX_POLLS; i++) {
-    if (deadline - Date.now() <= POLL_INTERVAL_MS) return { failure: "timeout" };
+    if (deadline - Date.now() <= POLL_INTERVAL_MS) break;
     await sleep(POLL_INTERVAL_MS);
     const remaining = deadline - Date.now();
-    if (remaining <= 0) return { failure: "timeout" };
+    if (remaining <= 0) break;
 
-    const next = await fetchSubmission(
-      `${baseUrl}/submissions/${encodeURIComponent(first.token)}?base64_encoded=true&fields=${FIELDS}`,
-      headers,
-      { method: "GET" },
-      Math.min(remaining, REQUEST_TIMEOUT_MS),
-    );
-    if ("failure" in next) return next;
+    const next = await fetchSubmission(pollUrl, headers, { method: "GET" }, Math.min(remaining, REQUEST_TIMEOUT_MS));
+    if (!next.ok) {
+      diagnose(`poll ${i + 1} of ${MAX_POLLS} failed`, {
+        url: pollUrl,
+        status: next.status,
+        bodyPreview: next.bodyPreview,
+        polls: i + 1,
+      });
+      return { failure: next.failure };
+    }
 
-    const status = next.status?.id;
+    const status = next.body.status?.id;
     if (typeof status === "number" && !NON_TERMINAL_STATUS_IDS.has(status)) {
-      return resultFromBody(next, test);
+      const result = resultFromBody(next.body, test);
+      if (!("failure" in result)) {
+        console.info(
+          "[judge0] submission ok:",
+          JSON.stringify({ judge0Status: judge0StatusLabel(status), polls: i + 1, elapsedMs: Date.now() - startedAt }),
+        );
+      }
+      return result;
     }
   }
+  diagnose("bounded polling budget exhausted (no terminal status within the 20s budget)", {
+    url: pollUrl,
+    polls: MAX_POLLS,
+  });
   return { failure: "timeout" };
 }
 
@@ -245,6 +359,12 @@ export async function executeTests(
 ): Promise<Judge0RunResult> {
   const cfg = config();
   if (!cfg) return { ok: false, reason: "not-configured" };
+  // A hosted RapidAPI endpoint always requires the key — fail fast with the
+  // controlled not-configured state instead of a guaranteed 401/403 round
+  // trip (diagnostic: apiKeyPresent=false, host=*.rapidapi.com).
+  if (!cfg.apiKey && cfg.host?.includes("rapidapi.com")) {
+    return { ok: false, reason: "not-configured" };
+  }
 
   const resolved = resolveJudge0Language(language);
   if (!resolved) return { ok: false, reason: "unsupported-language" };
