@@ -1,25 +1,21 @@
-"""Google Gemini provider — the only concrete provider in this phase.
+"""Google Gemini provider.
 
-Uses the official Google GenAI Python SDK (``google-genai`` — the successor
-to the deprecated ``google-generativeai`` package): one
-``client.models.generate_content`` call per batch with Gemini's native
-structured-JSON output (``response_mime_type="application/json"``).
-Responsibilities:
-  - hold the API key server-side only (constructed from settings),
-  - enforce a bounded request timeout (client-level http_options),
-  - request native JSON output and parse it into a dict,
-  - translate every SDK/transport failure into the typed provider errors so
-    routes can emit controlled responses,
-  - never log or otherwise surface the API key, and never let a raw provider
-    exception escape.
+Uses the official Google GenAI Python SDK and Gemini's native JSON output.
 
-No web search, grounding, function calling, code execution or other tools —
-question generation is a simple text -> structured JSON request.
+The provider:
+- keeps the API key server-side only
+- uses a bounded client timeout
+- requests native JSON output
+- retries transient Gemini 503/504 failures once
+- converts provider failures into typed application errors
+- never exposes the API key or raw provider exceptions
 """
+
 from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -29,118 +25,215 @@ from google.genai import types as genai_types
 
 from . import ProviderError, ProviderTimeoutError, safe_log_detail
 
-# Low temperature: these are deterministic, schema-strict generation tasks.
 _TEMPERATURE = 0.2
+
+# Only retry transient provider availability/deadline failures.
+_MAX_RETRIES = 1
+_RETRY_DELAY_SECONDS = 1.0
 
 logger = logging.getLogger("ai_service.providers.gemini")
 
 
 class GeminiProvider:
-    def __init__(self, *, api_key: str, model: str, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        timeout_seconds: float,
+    ) -> None:
         self.model = model
         self._timeout_seconds = timeout_seconds
-        # Timeout bounded on the client (milliseconds) so a hung call cannot
-        # block the route.
+
         self._client = genai.Client(
             api_key=api_key,
-            http_options=genai_types.HttpOptions(timeout=int(timeout_seconds * 1000)),
+            http_options=genai_types.HttpOptions(
+                timeout=int(timeout_seconds * 1000),
+            ),
         )
 
-    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-        try:
-            response = self._client.models.generate_content(
-                model=self.model,
-                contents=user_prompt,
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    # Gemini's native structured-JSON mode: the model is
-                    # constrained to emit parseable JSON (no markdown
-                    # wrapper); the route's Pydantic layer still validates
-                    # the exact response schema.
-                    response_mime_type="application/json",
-                    temperature=_TEMPERATURE,
-                ),
-            )
-        except httpx.TimeoutException as exc:
-            logger.warning(
-                "Gemini generate_content timed out: model=%s phase=generate_content "
-                "timeout_seconds=%s exception=%s detail=%s",
-                self.model,
-                self._timeout_seconds,
-                type(exc).__name__,
-                safe_log_detail(exc),
-            )
-            raise ProviderTimeoutError("provider timed out") from exc
-        except genai_errors.APIError as exc:
-            # Status/response details stay server-side; only the numeric
-            # status code is carried for logging, never to the client.
-            # Log the class, HTTP status, Google status string and the safe
-            # provider message so the ACTUAL failure is identifiable.
-            logger.warning(
-                "Gemini generate_content API error: model=%s phase=generate_content "
-                "exception=%s http_status=%s api_status=%s message=%s",
-                self.model,
-                type(exc).__name__,
-                exc.code,
-                safe_log_detail(getattr(exc, "status", "")),
-                safe_log_detail(getattr(exc, "message", "")),
-            )
-            raise ProviderError(f"provider API error: {exc.code}") from exc
-        except httpx.TransportError as exc:
-            logger.warning(
-                "Gemini generate_content transport failure: model=%s "
-                "phase=generate_content exception=%s detail=%s",
-                self.model,
-                type(exc).__name__,
-                safe_log_detail(exc),
-            )
-            raise ProviderError("provider connection failed") from exc
-        except Exception as exc:  # defensive: never leak an unexpected error
-            logger.warning(
-                "Gemini generate_content unexpected failure: model=%s "
-                "phase=generate_content exception=%s detail=%s",
-                self.model,
-                type(exc).__name__,
-                safe_log_detail(exc),
-            )
-            raise ProviderError(f"provider failure: {type(exc).__name__}") from exc
+    def generate_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, Any]:
+        last_error: Exception | None = None
 
-        content = response.text if response is not None else None
-        if content is None or not content.strip():
-            logger.warning(
-                "Gemini generate_content returned empty content: model=%s "
-                "phase=response_parsing",
-                self.model,
-            )
-            raise ProviderError("provider returned empty content")
-        try:
-            return _parse_json_object(content)
-        except ProviderError as exc:
-            # Distinguish parse-time failure from generation-time failure.
-            logger.warning(
-                "Gemini response parsing failed: model=%s phase=response_parsing "
-                "exception=ProviderError detail=%s",
-                self.model,
-                safe_log_detail(exc),
-            )
-            raise
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                response = self._client.models.generate_content(
+                    model=self.model,
+                    contents=user_prompt,
+                    config=genai_types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        response_mime_type="application/json",
+                        temperature=_TEMPERATURE,
+                    ),
+                )
+
+                content = response.text if response is not None else None
+
+                if content is None or not content.strip():
+                    logger.warning(
+                        "Gemini returned empty content: "
+                        "model=%s phase=response_parsing attempt=%s",
+                        self.model,
+                        attempt + 1,
+                    )
+                    raise ProviderError("provider returned empty content")
+
+                try:
+                    return _parse_json_object(content)
+                except ProviderError as exc:
+                    logger.warning(
+                        "Gemini response parsing failed: "
+                        "model=%s phase=response_parsing attempt=%s detail=%s",
+                        self.model,
+                        attempt + 1,
+                        safe_log_detail(exc),
+                    )
+                    raise
+
+            except httpx.TimeoutException as exc:
+                last_error = exc
+
+                logger.warning(
+                    "Gemini request timed out: "
+                    "model=%s phase=generate_content "
+                    "timeout_seconds=%s attempt=%s/%s detail=%s",
+                    self.model,
+                    self._timeout_seconds,
+                    attempt + 1,
+                    _MAX_RETRIES + 1,
+                    safe_log_detail(exc),
+                )
+
+                if attempt < _MAX_RETRIES:
+                    time.sleep(_RETRY_DELAY_SECONDS)
+                    continue
+
+                raise ProviderTimeoutError("provider timed out") from exc
+
+            except genai_errors.APIError as exc:
+                last_error = exc
+
+                status_code = getattr(exc, "code", None)
+
+                logger.warning(
+                    "Gemini API error: "
+                    "model=%s phase=generate_content "
+                    "exception=%s http_status=%s api_status=%s "
+                    "attempt=%s/%s message=%s",
+                    self.model,
+                    type(exc).__name__,
+                    status_code,
+                    safe_log_detail(getattr(exc, "status", "")),
+                    attempt + 1,
+                    _MAX_RETRIES + 1,
+                    safe_log_detail(getattr(exc, "message", "")),
+                )
+
+                # 429 = rate limit
+                # 500 = provider internal error
+                # 502 = bad gateway
+                # 503 = unavailable/high demand
+                # 504 = provider deadline exceeded
+                transient_statuses = {429, 500, 502, 503, 504}
+
+                if (
+                    status_code in transient_statuses
+                    and attempt < _MAX_RETRIES
+                ):
+                    time.sleep(_RETRY_DELAY_SECONDS)
+                    continue
+
+                if status_code == 504:
+                    raise ProviderTimeoutError(
+                        "provider request deadline exceeded"
+                    ) from exc
+
+                raise ProviderError(
+                    f"provider API error: {status_code}"
+                ) from exc
+
+            except httpx.TransportError as exc:
+                last_error = exc
+
+                logger.warning(
+                    "Gemini transport failure: "
+                    "model=%s phase=generate_content "
+                    "exception=%s attempt=%s/%s detail=%s",
+                    self.model,
+                    type(exc).__name__,
+                    attempt + 1,
+                    _MAX_RETRIES + 1,
+                    safe_log_detail(exc),
+                )
+
+                if attempt < _MAX_RETRIES:
+                    time.sleep(_RETRY_DELAY_SECONDS)
+                    continue
+
+                raise ProviderError(
+                    "provider connection failed"
+                ) from exc
+
+            except ProviderError:
+                raise
+
+            except Exception as exc:
+                last_error = exc
+
+                logger.warning(
+                    "Gemini unexpected failure: "
+                    "model=%s phase=generate_content "
+                    "exception=%s attempt=%s/%s detail=%s",
+                    self.model,
+                    type(exc).__name__,
+                    attempt + 1,
+                    _MAX_RETRIES + 1,
+                    safe_log_detail(exc),
+                )
+
+                raise ProviderError(
+                    f"provider failure: {type(exc).__name__}"
+                ) from exc
+
+        # Defensive fallback. The loop should always return or raise.
+        if last_error is not None:
+            raise ProviderError("provider generation failed") from last_error
+
+        raise ProviderError("provider generation failed")
 
 
 def _parse_json_object(content: str) -> dict[str, Any]:
-    """Parse model output into a JSON object, tolerating an accidental
-    markdown fence (native JSON mode should not produce one, but the
-    tolerance is cheap). Raises ProviderError (not a raw JSON error) on
-    failure."""
+    """Parse model output into a JSON object.
+
+    Native JSON mode should already produce clean JSON, but a single
+    accidental markdown fence is tolerated.
+    """
+
     text = content.strip()
+
     if text.startswith("```"):
-        # Strip a single leading/trailing code fence if the model added one.
         text = text.strip("`")
+
         if text.lstrip().lower().startswith("json"):
             text = text.lstrip()[4:]
+
+        text = text.strip()
+
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ProviderError("provider output is not valid JSON") from exc
+        raise ProviderError(
+            "provider output is not valid JSON"
+        ) from exc
+
     if not isinstance(data, dict):
-        raise ProviderError("provider output is not a JSON object")
+        raise ProviderError(
+            "provider output is not a JSON object"
+        )
+
     return data
