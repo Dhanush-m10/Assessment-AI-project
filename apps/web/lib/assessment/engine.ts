@@ -482,6 +482,8 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
   const initialStatus = args.previewEnabled ? "PREVIEW" : "IN_PROGRESS";
 
   const created: { id: string } = await db.$transaction(async (tx: Prisma.TransactionClient) => {
+    // Phase 1 (sequential): the Assessment row — every other write in this
+    // transaction references its id.
     const assessment = await tx.assessment.create({
       data: {
         userId: args.userId,
@@ -505,22 +507,35 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
       },
       select: { id: true },
     });
+    // Phase 2 (concurrent): every remaining write is INDEPENDENT of the
+    // others (verified FK graph: DRAFT anchors reference only pre-existing
+    // area/job-title/skill rows plus their own nested options; AssessmentQuestion
+    // rows reference the new assessment id plus PRE-EXISTING library/coding
+    // rows; AssessmentSkill rows reference the new assessment id plus
+    // pre-existing skills). Dispatching them concurrently keeps this
+    // interactive transaction to TWO sequential database round-trips no
+    // matter how many AI anchors are persisted, so it can no longer outlive
+    // Prisma's 5 s interactive-transaction budget under normal network
+    // latency (P2028). Statements, data and atomicity are unchanged.
+    const writes: Promise<unknown>[] = [];
     if (args.flow === "CODING") {
-      await tx.assessmentQuestion.createMany({
-        data: codingSelected.map((q, i) => ({
-          assessmentId: assessment.id,
-          sequence: i + 1,
-          source: q.aiGenerated ? ("AI_CODING_GENERATED" as const) : ("CODING_LIBRARY" as const),
-          libraryQuestionId: null,
-          // AI coding questions are fully ephemeral: no CodingQuestion row
-          // (UserAnswer.submittedCode has no FK, so none is needed).
-          codingQuestionId: q.aiGenerated ? null : q.id,
-          // Coding V1 has no per-skill quotas (A4 attribution is a
-          // quota concept); priority skills live in AssessmentSkill.
-          skillId: null,
-          questionSnapshot: buildCodingSnapshot(q),
-        })),
-      });
+      writes.push(
+        tx.assessmentQuestion.createMany({
+          data: codingSelected.map((q, i) => ({
+            assessmentId: assessment.id,
+            sequence: i + 1,
+            source: q.aiGenerated ? ("AI_CODING_GENERATED" as const) : ("CODING_LIBRARY" as const),
+            libraryQuestionId: null,
+            // AI coding questions are fully ephemeral: no CodingQuestion row
+            // (UserAnswer.submittedCode has no FK, so none is needed).
+            codingQuestionId: q.aiGenerated ? null : q.id,
+            // Coding V1 has no per-skill quotas (A4 attribution is a
+            // quota concept); priority skills live in AssessmentSkill.
+            skillId: null,
+            questionSnapshot: buildCodingSnapshot(q),
+          })),
+        }),
+      );
     } else {
       // Ephemeral AI MCQ anchors (Phase 3D): UserAnswer.selectedOptionId
       // carries an FK to QuestionOption, so an AI MCQ snapshot must
@@ -532,67 +547,76 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
       // tracking (spec §52), no library attribution.
       for (const q of selected) {
         if (!q.aiGenerated) continue;
-        await tx.question.create({
-          data: {
-            questionText: q.questionText,
-            difficulty: q.difficulty,
-            assessmentFlow: args.selection.flow,
-            status: "DRAFT",
-            ...(args.selection.areaId
-              ? { areas: { create: { areaOfInterestId: args.selection.areaId } } }
-              : {}),
-            ...(args.selection.jobTitleId
-              ? { jobTitles: { create: { jobTitleId: args.selection.jobTitleId } } }
-              : {}),
-            ...(q.quotaSkillId
-              ? { skills: { create: { skillId: q.quotaSkillId } } }
-              : {}),
-            options: {
-              create: q.options.map((o) => ({
-                id: o.id,
-                position: o.position,
-                text: o.text,
-                isCorrect: o.isCorrect,
-              })),
+        writes.push(
+          tx.question.create({
+            data: {
+              questionText: q.questionText,
+              difficulty: q.difficulty,
+              assessmentFlow: args.selection.flow,
+              status: "DRAFT",
+              ...(args.selection.areaId
+                ? { areas: { create: { areaOfInterestId: args.selection.areaId } } }
+                : {}),
+              ...(args.selection.jobTitleId
+                ? { jobTitles: { create: { jobTitleId: args.selection.jobTitleId } } }
+                : {}),
+              ...(q.quotaSkillId
+                ? { skills: { create: { skillId: q.quotaSkillId } } }
+                : {}),
+              options: {
+                create: q.options.map((o) => ({
+                  id: o.id,
+                  position: o.position,
+                  text: o.text,
+                  isCorrect: o.isCorrect,
+                })),
+              },
             },
-          },
-        });
-      }
-      await tx.assessmentQuestion.createMany({
-        data: selected.map((q, i) => ({
-          assessmentId: assessment.id,
-          sequence: i + 1,
-          source: q.aiGenerated ? ("AI_GENERATED" as const) : ("QUESTION_LIBRARY" as const),
-          libraryQuestionId: q.aiGenerated ? null : q.id,
-          codingQuestionId: null,
-          // A4: single primary skill = the quota this question filled
-          // (AI rows carry the skillId of the quota they filled).
-          skillId: q.quotaSkillId,
-          questionSnapshot: buildSnapshot({
-            questionText: q.questionText,
-            options: q.options,
-            difficulty: q.difficulty,
           }),
-        })),
-      });
+        );
+      }
+      writes.push(
+        tx.assessmentQuestion.createMany({
+          data: selected.map((q, i) => ({
+            assessmentId: assessment.id,
+            sequence: i + 1,
+            source: q.aiGenerated ? ("AI_GENERATED" as const) : ("QUESTION_LIBRARY" as const),
+            libraryQuestionId: q.aiGenerated ? null : q.id,
+            codingQuestionId: null,
+            // A4: single primary skill = the quota this question filled
+            // (AI rows carry the skillId of the quota they filled).
+            skillId: q.quotaSkillId,
+            questionSnapshot: buildSnapshot({
+              questionText: q.questionText,
+              options: q.options,
+              difficulty: q.difficulty,
+            }),
+          })),
+        }),
+      );
     }
     if (args.quotaSkills?.length) {
-      await tx.assessmentSkill.createMany({
-        data: args.quotaSkills.map((skillId) => ({
-          assessmentId: assessment.id,
-          skillId,
-          sources: args.skillSources?.[skillId] ?? ["JOB_TITLE"],
-        })),
-      });
+      writes.push(
+        tx.assessmentSkill.createMany({
+          data: args.quotaSkills.map((skillId) => ({
+            assessmentId: assessment.id,
+            skillId,
+            sources: args.skillSources?.[skillId] ?? ["JOB_TITLE"],
+          })),
+        }),
+      );
     } else if (args.skillProvenance?.length) {
-      await tx.assessmentSkill.createMany({
-        data: args.skillProvenance.map((row) => ({
-          assessmentId: assessment.id,
-          skillId: row.skillId,
-          sources: row.sources,
-        })),
-      });
+      writes.push(
+        tx.assessmentSkill.createMany({
+          data: args.skillProvenance.map((row) => ({
+            assessmentId: assessment.id,
+            skillId: row.skillId,
+            sources: row.sources,
+          })),
+        }),
+      );
     }
+    await Promise.all(writes);
     return assessment;
   });
 
