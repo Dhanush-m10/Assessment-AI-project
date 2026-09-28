@@ -180,8 +180,14 @@ export async function fillPlainMcqGap(args: {
     // deterministic server-side validator.
     // ---------------------------------------------------------------
     console.log("[AI GAP-FILL] Generated:", items.length);
-    console.log("[AI GAP-FILL] Accepted:", result.questions.length);
-    console.log("[AI GAP-FILL] Rejected:", result.rejected);
+
+    if (result.ok) {
+      console.log("[AI GAP-FILL] Accepted:", result.questions.length);
+      console.log("[AI GAP-FILL] Rejected:", result.rejected);
+    } else {
+      console.log("[AI GAP-FILL] Accepted:", 0);
+      console.log("[AI GAP-FILL] Rejected:", result.detail);
+    }
 
     if (!result.ok || result.questions.length !== args.gap) {
       return null;
