@@ -518,12 +518,14 @@ export async function createAssessment(args: AssessmentDraft): Promise<CreateRes
             assessmentFlow: args.selection.flow,
             status: "DRAFT",
             ...(args.selection.areaId
-              ? { areas: { connect: { id: args.selection.areaId } } }
+              ? { areas: { create: { areaOfInterestId: args.selection.areaId } } }
               : {}),
             ...(args.selection.jobTitleId
-              ? { jobTitles: { connect: { id: args.selection.jobTitleId } } }
+              ? { jobTitles: { create: { jobTitleId: args.selection.jobTitleId } } }
               : {}),
-            ...(q.quotaSkillId ? { skills: { connect: { id: q.quotaSkillId } } } : {}),
+            ...(q.quotaSkillId
+              ? { skills: { create: { skillId: q.quotaSkillId } } }
+              : {}),
             options: {
               create: q.options.map((o) => ({
                 id: o.id,
