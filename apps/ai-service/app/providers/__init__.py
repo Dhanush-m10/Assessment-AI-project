@@ -27,6 +27,17 @@ class ProviderTimeoutError(ProviderError):
     """The provider did not answer within the bounded timeout."""
 
 
+def safe_log_detail(value: object, limit: int = 300) -> str:
+    """Bounded, whitespace-flattened detail for server-side log lines.
+
+    Callers pass only provider error text (exception class/name, HTTP/API
+    status codes, provider error messages). Never pass the API key, the
+    shared secret, authorization headers, or prompt content — this helper
+    only bounds and flattens, it does not redact.
+    """
+    return " ".join(str(value).split())[:limit]
+
+
 class GenerationProvider(Protocol):
     """One generation call -> one parsed JSON object (dict)."""
 

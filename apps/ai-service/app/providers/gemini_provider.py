@@ -19,6 +19,7 @@ question generation is a simple text -> structured JSON request.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import httpx
@@ -26,15 +27,18 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
-from . import ProviderError, ProviderTimeoutError
+from . import ProviderError, ProviderTimeoutError, safe_log_detail
 
 # Low temperature: these are deterministic, schema-strict generation tasks.
 _TEMPERATURE = 0.2
+
+logger = logging.getLogger("ai_service.providers.gemini")
 
 
 class GeminiProvider:
     def __init__(self, *, api_key: str, model: str, timeout_seconds: float) -> None:
         self.model = model
+        self._timeout_seconds = timeout_seconds
         # Timeout bounded on the client (milliseconds) so a hung call cannot
         # block the route.
         self._client = genai.Client(
@@ -58,20 +62,68 @@ class GeminiProvider:
                 ),
             )
         except httpx.TimeoutException as exc:
+            logger.warning(
+                "Gemini generate_content timed out: model=%s phase=generate_content "
+                "timeout_seconds=%s exception=%s detail=%s",
+                self.model,
+                self._timeout_seconds,
+                type(exc).__name__,
+                safe_log_detail(exc),
+            )
             raise ProviderTimeoutError("provider timed out") from exc
         except genai_errors.APIError as exc:
             # Status/response details stay server-side; only the numeric
             # status code is carried for logging, never to the client.
+            # Log the class, HTTP status, Google status string and the safe
+            # provider message so the ACTUAL failure is identifiable.
+            logger.warning(
+                "Gemini generate_content API error: model=%s phase=generate_content "
+                "exception=%s http_status=%s api_status=%s message=%s",
+                self.model,
+                type(exc).__name__,
+                exc.code,
+                safe_log_detail(getattr(exc, "status", "")),
+                safe_log_detail(getattr(exc, "message", "")),
+            )
             raise ProviderError(f"provider API error: {exc.code}") from exc
         except httpx.TransportError as exc:
+            logger.warning(
+                "Gemini generate_content transport failure: model=%s "
+                "phase=generate_content exception=%s detail=%s",
+                self.model,
+                type(exc).__name__,
+                safe_log_detail(exc),
+            )
             raise ProviderError("provider connection failed") from exc
         except Exception as exc:  # defensive: never leak an unexpected error
+            logger.warning(
+                "Gemini generate_content unexpected failure: model=%s "
+                "phase=generate_content exception=%s detail=%s",
+                self.model,
+                type(exc).__name__,
+                safe_log_detail(exc),
+            )
             raise ProviderError(f"provider failure: {type(exc).__name__}") from exc
 
         content = response.text if response is not None else None
         if content is None or not content.strip():
+            logger.warning(
+                "Gemini generate_content returned empty content: model=%s "
+                "phase=response_parsing",
+                self.model,
+            )
             raise ProviderError("provider returned empty content")
-        return _parse_json_object(content)
+        try:
+            return _parse_json_object(content)
+        except ProviderError as exc:
+            # Distinguish parse-time failure from generation-time failure.
+            logger.warning(
+                "Gemini response parsing failed: model=%s phase=response_parsing "
+                "exception=ProviderError detail=%s",
+                self.model,
+                safe_log_detail(exc),
+            )
+            raise
 
 
 def _parse_json_object(content: str) -> dict[str, Any]:
