@@ -304,7 +304,7 @@ export async function resolveJdPayload(
 
 export type CreateRoleResult =
   | { ok: true; assessmentId: string; status: "PREVIEW" | "IN_PROGRESS" }
-  | { ok: false; reason: "insufficient"; available: number }
+  | { ok: false; reason: "insufficient"; available: number; aiFailure?: string }
   | { ok: false; reason: "invalid-area" | "invalid-job-title" | "unsupported-flow" }
   | { ok: false; reason: "invalid-jd"; message: string }
   | { ok: false; reason: "invalid-config"; message: string };
@@ -459,7 +459,9 @@ export async function createRoleAssessment(args: {
 
 export type CreateAdaptiveResult =
   | { ok: true; assessmentId: string; status: "IN_PROGRESS" }
-  | { ok: false; reason: "insufficient"; available: number }
+  // `aiFailure` is never set on the adaptive path (no pre-selection gap-fill
+  // in V1) — the field exists only so shared callers can read it uniformly.
+  | { ok: false; reason: "insufficient"; available: number; aiFailure?: string }
   | { ok: false; reason: "invalid-area" | "invalid-job-title" | "unsupported-flow" }
   | { ok: false; reason: "invalid-jd" | "invalid-config"; message: string };
 

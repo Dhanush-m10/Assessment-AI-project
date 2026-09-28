@@ -65,7 +65,7 @@ export async function selectEligibleQuestions(args: {
 
 export type CreateResult =
   | { ok: true; assessmentId: string; status: "PREVIEW" | "IN_PROGRESS" }
-  | { ok: false; reason: "insufficient"; available: number }
+  | { ok: false; reason: "insufficient"; available: number; aiFailure?: string }
   | { ok: false; reason: "invalid-area" };
 
 /**

@@ -79,9 +79,11 @@ export default async function PreviewPage({
   }
 
   let available = 0;
+  let aiFailure: string | undefined;
   if (preview) {
     // Preview ON: show the eligible pool size BEFORE creation so an
-    // insufficient library is surfaced before Start.
+    // insufficient library is surfaced before Start. A short pool is NOT a
+    // blocker: AI gap-fill runs at start time and fills the deficit.
     const eligible = await selectEligibleQuestions({ userId: user.id, areaId: area.id, difficulty });
     available = eligible.length;
   } else {
@@ -102,8 +104,10 @@ export default async function PreviewPage({
     });
     if (result.ok) redirect(`/assessments/take/${result.assessmentId}`);
     if (result.reason === "insufficient") {
-      // Engine's authoritative pool size — drives the message below.
+      // Engine's authoritative pool size + (when the AI gap-fill attempt
+      // failed) the actual generation failure — drives the message below.
       available = result.available;
+      aiFailure = result.aiFailure;
     } else {
       return (
         <div className="mx-auto max-w-2xl">
@@ -161,11 +165,34 @@ export default async function PreviewPage({
           ))}
         </dl>
 
-        {insufficient ? (
+        {insufficient && preview ? (
+          // Preview ON: short library pool is informational, not a blocker —
+          // AI gap-fill generates the remaining questions at start time, so
+          // the StartForm stays available below.
           <EmptyState
             className="mt-6"
-            title="Not enough eligible library questions"
-            message={`Only ${available} live question${available === 1 ? "" : "s"} match this configuration after the 30-day rotation rule. AI gap-fill generation arrives in the AI phase — for now, lower the question count or change difficulty.`}
+            title={
+              available === 0
+                ? "No live questions match this configuration"
+                : "AI gap-fill will complete this assessment"
+            }
+            message={
+              available === 0
+                ? "No live questions match this configuration after the 30-day rotation rule. When you start, AI gap-fill will generate the questions automatically."
+                : `Only ${available} live question${available === 1 ? "" : "s"} match this configuration after the 30-day rotation rule. When you start, AI gap-fill will automatically generate the remaining ${count - available}.`
+            }
+          />
+        ) : null}
+        {insufficient && !preview ? (
+          // Preview OFF: creation was already attempted (including AI
+          // gap-fill) and failed — surface the actual failure.
+          <EmptyState
+            className="mt-6"
+            title="Could not start this assessment"
+            message={
+              aiFailure ??
+              `Only ${available} live question${available === 1 ? "" : "s"} match this configuration after the 30-day rotation rule, and the request could not be completed. Please try again shortly or adjust the configuration.`
+            }
             action={
               <Link
                 href={`/assessments/${area.id}`}

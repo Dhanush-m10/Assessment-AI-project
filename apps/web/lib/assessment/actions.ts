@@ -42,8 +42,11 @@ export type StartState = {
   available?: number;
 };
 
+// Shown ONLY for a genuine library shortage (no AI gap-fill attempt applied).
+// When the pool was short AND the AI gap-fill attempt failed, the actual
+// generation failure (result.aiFailure) is surfaced instead.
 const INSUFFICIENT_MSG =
-  "Not enough eligible library questions for this configuration. AI gap-fill generation arrives in the AI phase; try a lower question count or another difficulty.";
+  "Not enough eligible library questions for this configuration. Try a lower question count or another difficulty.";
 
 export async function startGeneralAssessment(
   _prev: StartState,
@@ -72,7 +75,9 @@ export async function startGeneralAssessment(
 
   if (!result.ok) {
     if (result.reason === "insufficient") {
-      return { error: INSUFFICIENT_MSG, available: result.available };
+      // aiFailure set = pool was short AND the AI gap-fill attempt failed —
+      // surface the actual generation failure, not a library-count claim.
+      return { error: result.aiFailure ?? INSUFFICIENT_MSG, available: result.available };
     }
     return { error: "This assessment area is not available. Please pick another area." };
   }
@@ -138,7 +143,10 @@ export async function startBasicMcqAssessment(
 
   if (!result.ok) {
     if (result.reason === "insufficient") {
-      return { error: INSUFFICIENT_MSG, available: result.available };
+      // aiFailure set = pool was short AND the AI gap-fill attempt failed —
+      // surface the actual generation failure, not a library-count claim.
+      // (Adaptive V1 never sets it: no pre-selection gap-fill.)
+      return { error: result.aiFailure ?? INSUFFICIENT_MSG, available: result.available };
     }
     if (result.reason === "invalid-jd" || result.reason === "invalid-config") {
       return { error: result.message };
@@ -214,6 +222,11 @@ export async function startCodingAssessment(
 
   if (!result.ok) {
     if (result.reason === "insufficient") {
+      if (result.aiFailure) {
+        // AI gap-fill was attempted and failed — that is the actual cause,
+        // NOT "no challenges exist".
+        return { error: result.aiFailure, available: result.available };
+      }
       if (result.available === 0) {
         return {
           error:
