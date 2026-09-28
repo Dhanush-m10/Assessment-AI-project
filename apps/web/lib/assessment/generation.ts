@@ -168,8 +168,8 @@ async function fetchExistingNormalizedMcqTexts(ctx: McqGenerationContext): Promi
       assessmentFlow: ctx.flow,
       difficulty: ctx.difficulty,
       ...(ctx.flow === "GENERAL"
-        ? { areas: { some: { areaOfInterestId: ctx.areaId } } }
-        : { jobTitles: { some: { jobTitleId: ctx.jobTitleId } } }),
+        ? { areas: { some: { areaOfInterestId: ctx.areaId! } } }
+        : { jobTitles: { some: { jobTitleId: ctx.jobTitleId! } } }),
     },
     select: { questionText: true },
   })) as { questionText: string }[];
@@ -315,7 +315,7 @@ async function fetchExistingNormalizedCodingTexts(ctx: CodingGenerationContext):
     where: {
       status: "LIVE",
       difficulty: ctx.difficulty,
-      jobTitles: { some: { jobTitleId: ctx.jobTitleId } },
+      jobTitles: { some: { jobTitleId: ctx.jobTitleId! } },
     },
     select: { problemStatement: true },
   })) as { problemStatement: string }[];
