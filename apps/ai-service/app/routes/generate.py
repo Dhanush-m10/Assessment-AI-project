@@ -14,6 +14,7 @@ provider says, and no secret, ever reaches the client.
 from __future__ import annotations
 
 import hmac
+import logging
 import re
 from typing import Any, Callable, Protocol
 
@@ -23,9 +24,11 @@ from pydantic import BaseModel, ValidationError
 
 from .. import prompts, schemas
 from ..config import SHARED_SECRET_ENV, ConfigurationError, get_generation_settings
-from ..providers import ProviderError, ProviderTimeoutError
+from ..providers import ProviderError, ProviderTimeoutError, safe_log_detail
 from ..providers.gemini_provider import GeminiProvider
 import os
+
+logger = logging.getLogger("ai_service.routes.generate")
 
 router = APIRouter()
 
@@ -119,14 +122,46 @@ def _generate(
     try:
         provider = provider_factory(settings)
         payload = provider.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
-    except ProviderTimeoutError:
+    except ProviderTimeoutError as exc:
+        # Server-side only: keep the controlled envelope for the client, but
+        # record the safe provider detail so the timeout is diagnosable.
+        logger.warning(
+            "generate: provider timeout model=%s phase=generate_content detail=%s",
+            getattr(settings, "model", None),
+            safe_log_detail(exc),
+        )
         return _error(504, "provider-timeout", "The question generator timed out. Please try again.")
-    except ProviderError:
+    except ProviderError as exc:
+        # The provider already logged the full safe detail (exception class,
+        # HTTP/API status, model). Echo a one-line route-level record so the
+        # failure is visible at the request boundary too.
+        logger.warning(
+            "generate: provider error model=%s phase=generate_content detail=%s",
+            getattr(settings, "model", None),
+            safe_log_detail(exc),
+        )
         return _error(502, "provider-error", "The question generator failed. Please try again.")
     try:
         response = parse_response(payload)
         validate_batch(req, response)
-    except (ValidationError, ValueError):
+    except (ValidationError, ValueError) as exc:
+        # Generation SUCCEEDED; the model's output failed our schema / batch
+        # rules. Distinguish this from a provider failure in the log.
+        # ValueError detail is one of this module's FIXED messages (safe to
+        # log); a Pydantic ValidationError's str embeds the model's output
+        # content, so log only its shape, never the content.
+        detail = (
+            safe_log_detail(exc)
+            if isinstance(exc, ValueError)
+            else f"{len(exc.errors())} field error(s)"
+        )
+        logger.warning(
+            "generate: response parsing/validation failed model=%s "
+            "phase=response_parsing exception=%s detail=%s",
+            getattr(settings, "model", None),
+            type(exc).__name__,
+            detail,
+        )
         return _error(
             502,
             "malformed-provider-output",
