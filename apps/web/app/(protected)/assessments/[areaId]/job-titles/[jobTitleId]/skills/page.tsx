@@ -4,6 +4,8 @@ import { requireUser } from "@/lib/auth/require-user";
 import { listTitleSkills, parseExperience, validateRoleContext } from "@/lib/assessment/basic-mcq";
 import { parseCount, parseDifficulty } from "@/lib/assessment/general";
 import { parseCodingCount } from "@/lib/assessment/limits";
+import { parseCodingLanguage } from "@/lib/assessment/coding-languages";
+import { languageLabel } from "@/lib/judge0/languages";
 import { Card, EmptyState } from "@/components/ui/card";
 import { StepIndicator } from "@/components/ui/step-indicator";
 import { SkillsForm } from "@/components/assessment/skills-form";
@@ -33,6 +35,8 @@ export default async function SkillSelectionPage({
     count?: string;
     preview?: string;
     adaptive?: string;
+    /** CODING only (Phase C3): the programming language chosen at setup. */
+    language?: string;
   }>;
 }) {
   const { areaId, jobTitleId } = await params;
@@ -50,14 +54,21 @@ export default async function SkillSelectionPage({
   const experience = parseExperience(sp.experience ?? "");
   const count = isCoding ? parseCodingCount(sp.count ?? "") : parseCount(sp.count ?? "");
   const preview = sp.preview === "on";
+  // Phase C3: CODING requires a valid, supported language — re-validated
+  // here (stale/edited URLs get the controlled state, never a guess).
+  const language = isCoding ? parseCodingLanguage(sp.language ?? "") : null;
 
-  if (!difficulty || !experience || count === null) {
+  if (!difficulty || !experience || count === null || (isCoding && !language)) {
     return (
       <div className="mx-auto max-w-2xl">
         <Card className="p-8">
           <EmptyState
             title="Invalid configuration"
-            message="Difficulty, experience band and question count must be valid. Please configure the assessment again."
+            message={
+              isCoding
+                ? "Difficulty, experience band, challenge count and programming language must be valid. Please configure the assessment again."
+                : "Difficulty, experience band and question count must be valid. Please configure the assessment again."
+            }
             action={
               <Link
                 href={setupHref}
@@ -76,7 +87,11 @@ export default async function SkillSelectionPage({
   const adaptive = sp.adaptive === "on";
   const configQuery = `difficulty=${difficulty}&experience=${experience}&count=${count}&preview=${preview ? "on" : "off"}&adaptive=${adaptive ? "on" : "off"}`;
   const jdHref = `/assessments/${areaId}/job-titles/${jobTitleId}/jd?${configQuery}`;
-  const createProps = { areaId, jobTitleId, difficulty, experience, count, preview };
+  // CODING: carry the validated language into the creation form; the MCQ
+  // skills step (BASIC_SKILLS_MCQ) keeps its exact previous props.
+  const createProps = isCoding
+    ? { areaId, jobTitleId, difficulty, experience, count, preview, language: language as string }
+    : { areaId, jobTitleId, difficulty, experience, count, preview };
   const steps = isCoding
     ? ["Job title", "Setup", "Skills", "Preview"]
     : ["Job title", "Setup", "Skills", "Job description", "Preview"];
@@ -96,18 +111,19 @@ export default async function SkillSelectionPage({
           {ctxResult.context.jobTitleName}
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          {isCoding
-            ? `Choose the skills you want prioritised. Your ${count} coding challenge${count === 1 ? "" : "s"} will favour challenges tagged with these skills, then the job title's configured skills.`
+          {isCoding && language
+            ? `All challenges will be in ${languageLabel(language)}. Choose the skills you want prioritised — your ${count} ${languageLabel(language)} challenge${count === 1 ? "" : "s"} will favour challenges tagged with these skills, then the job title's configured skills.`
             : `Choose the skills you want prioritised. Your ${count} questions will be split evenly across the final skill set — selected skills first, then skills from the job description you pick next, then the job title's configured skills.`}
         </p>
 
-        {isCoding && (
+        {isCoding && language && (
           <ConfigSummary
             difficulty={difficulty}
             experience={experience}
             count={count}
             preview={preview}
             countNoun="Challenges"
+            language={languageLabel(language)}
           />
         )}
 
