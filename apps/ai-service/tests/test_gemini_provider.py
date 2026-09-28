@@ -82,14 +82,14 @@ def test_client_constructed_with_key_and_bounded_timeout(monkeypatch):
 # ------------------------------------------------------------ SDK invocation
 
 
-def test_generate_json_invokes_gemini_25_flash_in_native_json_mode(monkeypatch):
+def test_generate_json_invokes_gemini_35_flash_lite_in_native_json_mode(monkeypatch):
     captures, fake = _install_fake_client(monkeypatch, text='{"questions": [{"question": "Q"}]}')
     provider = _make_provider()
     result = provider.generate_json(system_prompt=SYSTEM, user_prompt=USER)
     assert result == {"questions": [{"question": "Q"}]}
     assert len(fake.models.calls) == 1  # one SDK call per generation batch
     call = fake.models.calls[0]
-    assert call["model"] == "gemini-2.5-flash"  # exact pinned model identifier
+    assert call["model"] == "gemini-3.5-flash-lite"  # exact pinned model identifier
     assert call["contents"] == USER
     config = call["config"]
     assert isinstance(config, genai_types.GenerateContentConfig)
