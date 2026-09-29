@@ -79,6 +79,10 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
+  // Vercel Services rejects Edge Function output inside a service; Next.js
+  // 15.5+ runs middleware on the Node.js runtime with this flag. All
+  // dependencies here (@supabase/ssr, next/server) are Node-compatible.
+  runtime: "nodejs",
   matcher: [
     // Skip Next internals and static assets.
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|ico|webp)$).*)",
